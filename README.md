@@ -158,4 +158,8 @@ and built from scratch.
 
 ---
 
+<<<<<<< HEAD
 *Built by [Your Name] · [Your LinkedIn] · [Your Email]*
+=======
+*Built by Sai Chandra Prasad Bopparapu · https://www.linkedin.com/in/bopparapu-sai-chandra-prasad-59a281229/ · saichandraprasadbopparapu3336@gmail.com*
+>>>>>>> dev
