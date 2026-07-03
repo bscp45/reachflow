@@ -8,7 +8,7 @@ on:
 
 jobs:
   frontend-ci:
-    name: Frontend (Next.js)
+    name: frontend-ci
     runs-on: ubuntu-latest
 
     steps:
