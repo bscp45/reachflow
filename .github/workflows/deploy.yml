@@ -4,33 +4,14 @@ on:
   push:
     branches: [main]
 
+# Vercel deploys automatically via GitHub integration
+# This file is a placeholder until Phase 2 backend is added
+# No jobs needed here right now
+
 jobs:
-  deploy-frontend:
-    name: Deploy frontend to Vercel
+  placeholder:
+    name: deploy-ready
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy to Vercel (production)
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: "--prod"
-
-  # Uncomment when backend is ready (Phase 2)
-  # deploy-backend:
-  #   name: Deploy backend to AWS ECS
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Configure AWS credentials
-  #       uses: aws-actions/configure-aws-credentials@v4
-  #       with:
-  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  #         aws-region: ap-south-1
-  
+      - name: Vercel handles frontend deployment automatically
+        run: echo "Frontend deployed via Vercel GitHub integration"
