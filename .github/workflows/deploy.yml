@@ -4,11 +4,14 @@ on:
   push:
     branches: [main]
 
-jobs:
-  deploy-frontend:
-    name: Deploy frontend to Vercel
-    runs-on: ubuntu-latest
+# Vercel deploys automatically via GitHub integration
+# This file is a placeholder until Phase 2 backend is added
+# No jobs needed here right now
 
+jobs:
+  placeholder:
+    name: deploy-ready
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
