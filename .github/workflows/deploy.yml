@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
 
+# Vercel deploys automatically via GitHub integration
+# This file is a placeholder until Phase 2 backend is added
+# No jobs needed here right now
+
 jobs:
   placeholder:
     name: deploy-ready
