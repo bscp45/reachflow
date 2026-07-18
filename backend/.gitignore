@@ -1,0 +1,36 @@
+# Virtual environment — never commit this
+venv/
+env/
+.venv/
+
+# Python cache — auto-generated, never commit
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Environment variables — never commit
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.sqlite3
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Mypy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
