@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Import routers AFTER load_dotenv ──────────────────────────────────────────
+from app.api import leads as leads_router
+from app.api import clients as clients_router
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 class Settings(BaseSettings):
     app_env: str = "development"
@@ -48,6 +52,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(leads_router.router)
+app.include_router(clients_router.router)
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/")
