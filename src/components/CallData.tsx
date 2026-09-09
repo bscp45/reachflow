@@ -9,16 +9,18 @@ import type { Lead, LeadStatus } from '@/types';
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_META: Record<LeadStatus, { label: string; color: string; bg: string }> = {
-  agreed:    { label: 'Agreed',    color: '#10B981', bg: 'rgba(16,185,129,.12)'  },
-  declined:  { label: 'Declined',  color: '#EF4444', bg: 'rgba(239,68,68,.12)'   },
-  no_answer: { label: 'No answer', color: '#F59E0B', bg: 'rgba(245,158,11,.12)'  },
-  calling:   { label: 'Calling…',  color: '#3B82F6', bg: 'rgba(59,130,246,.12)'  },
-  pending:   { label: 'Pending',   color: '#8B5CF6', bg: 'rgba(139,92,246,.12)'  },
+  agreed:           { label: 'Agreed',        color: '#10B981', bg: 'rgba(16,185,129,.12)'  },
+  declined:         { label: 'Declined',      color: '#EF4444', bg: 'rgba(239,68,68,.12)'   },
+  no_answer:        { label: 'No answer',     color: '#F59E0B', bg: 'rgba(245,158,11,.12)'  },
+  calling:          { label: 'Calling…',      color: '#3B82F6', bg: 'rgba(59,130,246,.12)'  },
+  pending:          { label: 'Pending',       color: '#8B5CF6', bg: 'rgba(139,92,246,.12)'  },
+  pending_approval: { label: 'Needs approval', color: '#EC4899', bg: 'rgba(236,72,153,.12)' },
 };
 
 const FILTER_COLORS: Partial<Record<LeadStatus, string>> = {
   agreed: '#10B981', declined: '#EF4444',
   no_answer: '#F59E0B', calling: '#3B82F6', pending: '#8B5CF6',
+  pending_approval: '#EC4899',
 };
 
 const AVATAR_COLORS = [
