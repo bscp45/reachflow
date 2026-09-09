@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import { DM_Sans, DM_Mono } from 'next/font/google';
 import { ThemeProvider } from '@/lib/theme-context';
-import Sidebar from '@/components/layout/Sidebar';
+import { AuthProvider } from '@/lib/auth-context';
+import AppShell from '@/components/layout/AppShell';
 import './globals.css';
 
 const dmSans = DM_Sans({
@@ -23,16 +24,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${dmSans.variable} ${dmMono.variable}`}>
-        <ThemeProvider>
-          <div className="layout-root">
-            <Sidebar />
-            <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: '100vh' }}>
-              {children}
-            </main>
-          </div>
-        </ThemeProvider>
+    <html lang="en" className={`${dmSans.variable} ${dmMono.variable}`}>
+      <body>
+        <AuthProvider>
+          <ThemeProvider>
+          <AppShell>{children}</AppShell>
+          </ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );
