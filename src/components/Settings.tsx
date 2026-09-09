@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Topbar from '@/components/layout/Topbar';
 import { useTheme } from '@/lib/theme-context';
-import type { UserRole } from '@/types';
+import { ROLE_META, type UserRole } from '@/types';
 
 // ── Mock data — replace with real API calls later ─────────────────────────────
 const MOCK_PROFILE = {
@@ -14,18 +14,12 @@ const MOCK_PROFILE = {
 };
 
 const MOCK_TEAM = [
-  { id: 1, name: 'Super Admin',  email: 'admin@reachflow.in',       role: 'super_admin'   as UserRole, lastActive: 'Active now' },
-  { id: 2, name: 'Rahul Mehta',  email: 'rahul@finedge.in',         role: 'client_admin'  as UserRole, lastActive: '2h ago' },
-  { id: 3, name: 'Anita Desai',  email: 'anita@finedge.in',         role: 'client_viewer'  as UserRole, lastActive: '1d ago' },
-  { id: 4, name: 'Vikram Shah',  email: 'vikram@bluestar.in',       role: 'client_admin'  as UserRole, lastActive: '4h ago' },
+  { id: 1, name: 'Super Admin',  email: 'admin@reachflow.in', role: 'super_admin'       as UserRole, lastActive: 'Active now' },
+  { id: 2, name: 'Ravi Kumar',   email: 'ravi@reachflow.in',  role: 'reachflow_manager' as UserRole, lastActive: '30m ago' },
+  { id: 3, name: 'Rahul Mehta',  email: 'rahul@finedge.in',   role: 'client_owner'      as UserRole, lastActive: '2h ago' },
+  { id: 4, name: 'Anita Desai',  email: 'anita@finedge.in',   role: 'client_manager'    as UserRole, lastActive: '1d ago' },
+  { id: 5, name: 'Priya Nair',   email: 'priya@finedge.in',   role: 'client_analyst'    as UserRole, lastActive: '3d ago' },
 ];
-
-const ROLE_META: Record<UserRole, { label: string; color: string; desc: string }> = {
-  super_admin:    { label: 'Super Admin',    color: '#6366F1', desc: 'Sees all clients, full access' },
-  client_admin:   { label: 'Client Admin',   color: '#10B981', desc: 'Manages their own leads & team' },
-  client_viewer:  { label: 'Client Viewer',  color: '#F59E0B', desc: 'Read-only access to their data' },
-};
-
 // ── Toggle switch component ────────────────────────────────────────────────────
 function Toggle({ on, onChange, dark }: { on: boolean; onChange: () => void; dark: boolean }) {
   return (
