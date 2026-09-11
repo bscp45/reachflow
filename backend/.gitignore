@@ -15,6 +15,9 @@ __pycache__/
 .env.*
 !.env.example
 
+# Seeded demo credentials — never commit
+seed_credentials.txt
+
 # Database
 *.db
 *.sqlite3
