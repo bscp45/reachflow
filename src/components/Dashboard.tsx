@@ -1,11 +1,20 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Topbar from '@/components/layout/Topbar';
 import { useTheme } from '@/lib/theme-context';
-import { MOCK_STATS, MOCK_CLIENTS } from '@/lib/mock-data';
+import { useAuth } from '@/lib/auth-context';
+import { getCampaignStats, getClients } from '@/lib/api';
+import type { CampaignStats, Client } from '@/types';
 
 export default function Dashboard() {
   const { dark } = useTheme();
+  const { isReachFlowStaff } = useAuth();
+
+  const [stats, setStats]     = useState<CampaignStats | null>(null);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
 
   const t = {
     bg:    dark ? '#0A0D14' : '#F0F3FA',
@@ -16,22 +25,132 @@ export default function Dashboard() {
     muted: dark ? '#6B7280' : '#6B7280',
   };
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Fire both requests together rather than one after the other
+        const [statsData, clientsData] = await Promise.all([
+          getCampaignStats(),
+          getClients(),
+        ]);
+
+        // Guard against setting state after the component unmounted
+        if (cancelled) return;
+
+        setStats(statsData);
+        setClients(clientsData);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Failed to load dashboard');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
   const pct = (n: number, total: number) =>
     total ? Math.round((n / total) * 100) : 0;
 
+  // ── Loading ─────────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <>
+        <Topbar title="Dashboard" />
+        <div style={{
+          flex: 1, background: t.bg, padding: 28,
+          display: 'flex', flexDirection: 'column', gap: 24,
+        }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
+            gap: 14,
+          }}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} style={{
+                background: t.surf,
+                border: `1px solid ${t.bord}`,
+                borderRadius: 14,
+                padding: '16px 18px',
+                height: 92,
+                opacity: 0.5,
+              }}>
+                <div style={{
+                  width: 48, height: 26, borderRadius: 6,
+                  background: t.surf2, marginBottom: 8,
+                }} />
+                <div style={{
+                  width: 80, height: 10, borderRadius: 4,
+                  background: t.surf2,
+                }} />
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: t.muted }}>Loading dashboard…</div>
+        </div>
+      </>
+    );
+  }
+
+  // ── Error ───────────────────────────────────────────────────────────────────
+  if (error) {
+    return (
+      <>
+        <Topbar title="Dashboard" />
+        <div style={{
+          flex: 1, background: t.bg,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{ textAlign: 'center', maxWidth: 360 }}>
+            <div style={{ fontSize: 28, marginBottom: 10 }}>⚠</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: t.text, marginBottom: 6 }}>
+              Couldn&apos;t load the dashboard
+            </div>
+            <div style={{ fontSize: 12, color: t.muted, marginBottom: 16, lineHeight: 1.6 }}>
+              {error}
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '8px 18px', background: '#6366F1', border: 'none',
+                borderRadius: 8, color: '#fff', fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!stats) return null;
+
+  // ── Loaded ──────────────────────────────────────────────────────────────────
+  const cards = [
+    { label: 'Total Leads', value: stats.total,    color: '#6366F1', sub: 'uploaded' },
+    { label: 'Calls Made',  value: stats.called,   color: '#3B82F6', sub: `${pct(stats.called, stats.total)}% of total` },
+    { label: 'Agreed',      value: stats.agreed,   color: '#10B981', sub: `${pct(stats.agreed, stats.called)}% success` },
+    { label: 'No Answer',   value: stats.noAnswer, color: '#F59E0B', sub: 'retry in 2 hrs' },
+    { label: 'Declined',    value: stats.declined, color: '#EF4444', sub: 'retry in 30 days' },
+    { label: 'Pending',     value: stats.pending,  color: '#8B5CF6', sub: 'not yet called' },
+  ];
+
   return (
     <>
-      <Topbar title="Dashboard" />
+      <Topbar title="Dashboard" badge={`${stats.total} leads`} />
 
       <div style={{
-        flex: 1,
-        overflow: 'auto',
-        background: t.bg,
-        padding: 28,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 24,
-        minHeight: 0,
+        flex: 1, overflow: 'auto', background: t.bg, padding: 28,
+        display: 'flex', flexDirection: 'column', gap: 24, minHeight: 0,
       }}>
 
         {/* Stat cards */}
@@ -40,14 +159,7 @@ export default function Dashboard() {
           gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
           gap: 14,
         }}>
-          {[
-            { label: 'Total Leads', value: MOCK_STATS.total,    color: '#6366F1', sub: 'uploaded' },
-            { label: 'Calls Made',  value: MOCK_STATS.called,   color: '#3B82F6', sub: `${pct(MOCK_STATS.called, MOCK_STATS.total)}% of total` },
-            { label: 'Agreed',      value: MOCK_STATS.agreed,   color: '#10B981', sub: `${pct(MOCK_STATS.agreed, MOCK_STATS.called)}% success` },
-            { label: 'No Answer',   value: MOCK_STATS.noAnswer, color: '#F59E0B', sub: 'retry in 2 hrs' },
-            { label: 'Declined',    value: MOCK_STATS.declined, color: '#EF4444', sub: 'retry in 30 days' },
-            { label: 'Pending',     value: MOCK_STATS.pending,  color: '#8B5CF6', sub: 'not yet called' },
-          ].map(card => (
+          {cards.map(card => (
             <div key={card.label} style={{
               background: t.surf,
               borderLeft: `1px solid ${t.bord}`,
@@ -72,39 +184,30 @@ export default function Dashboard() {
 
         {/* Campaign progress */}
         <div style={{
-          background: t.surf,
-          border: `1px solid ${t.bord}`,
-          borderRadius: 14,
-          padding: '18px 20px',
+          background: t.surf, border: `1px solid ${t.bord}`,
+          borderRadius: 14, padding: '18px 20px',
         }}>
           <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            marginBottom: 10,
-            fontSize: 13,
-            fontWeight: 600,
-            color: t.text,
+            display: 'flex', justifyContent: 'space-between', marginBottom: 10,
+            fontSize: 13, fontWeight: 600, color: t.text,
           }}>
             <span>Campaign progress</span>
             <span style={{ color: t.muted }}>
-              {pct(MOCK_STATS.called, MOCK_STATS.total)}% called
+              {pct(stats.called, stats.total)}% called
             </span>
           </div>
 
           <div style={{
-            height: 10,
-            borderRadius: 6,
-            background: t.surf2,
-            overflow: 'hidden',
-            display: 'flex',
+            height: 10, borderRadius: 6, background: t.surf2,
+            overflow: 'hidden', display: 'flex',
           }}>
             {[
-              { val: MOCK_STATS.agreed,   color: '#10B981' },
-              { val: MOCK_STATS.declined, color: '#EF4444' },
-              { val: MOCK_STATS.noAnswer, color: '#F59E0B' },
+              { val: stats.agreed,   color: '#10B981' },
+              { val: stats.declined, color: '#EF4444' },
+              { val: stats.noAnswer, color: '#F59E0B' },
             ].map((seg, i) => (
               <div key={i} style={{
-                width: `${pct(seg.val, MOCK_STATS.total)}%`,
+                width: `${pct(seg.val, stats.total)}%`,
                 background: seg.color,
                 height: '100%',
               }} />
@@ -119,11 +222,8 @@ export default function Dashboard() {
               { label: 'Pending',   color: dark ? '#334155' : '#CBD5E1' },
             ].map(leg => (
               <div key={leg.label} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                fontSize: 11,
-                color: t.muted,
+                display: 'flex', alignItems: 'center', gap: 5,
+                fontSize: 11, color: t.muted,
               }}>
                 <span style={{
                   width: 8, height: 8, borderRadius: 2,
@@ -135,67 +235,52 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Client overview */}
-        <div style={{
-          background: t.surf,
-          border: `1px solid ${t.bord}`,
-          borderRadius: 14,
-          padding: 20,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, color: t.text }}>
-            Client overview — all accounts
-          </div>
-
+        {/* Client overview — ReachFlow staff only */}
+        {isReachFlowStaff && (
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
-            gap: 12,
+            background: t.surf, border: `1px solid ${t.bord}`,
+            borderRadius: 14, padding: 20,
           }}>
-            {MOCK_CLIENTS.map((c, i) => {
-              const colors = ['#6366F1', '#10B981', '#F59E0B', '#3B82F6'];
-              const color = colors[i % colors.length];
-              return (
-                <div key={c.id} style={{
-                  padding: '12px 14px',
-                  borderRadius: 10,
-                  background: t.surf2,
-                  borderTop: `1px solid ${t.bord}`,
-                  borderRight: `1px solid ${t.bord}`,
-                  borderBottom: `1px solid ${t.bord}`,
-                  borderLeft: `3px solid ${color}`,
-                }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: t.text }}>
-                    {c.name}
-                  </div>
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 11,
-                    color: t.muted,
-                  }}>
-                    <span>{c.totalLeads} leads</span>
-                    <span style={{ color, fontWeight: 700 }}>
-                      {c.successRate}% success
-                    </span>
-                  </div>
-                  <div style={{
-                    height: 3,
-                    borderRadius: 2,
-                    background: t.bord,
-                    marginTop: 8,
-                  }}>
-                    <div style={{
-                      height: '100%',
-                      width: `${c.successRate}%`,
-                      background: color,
-                      borderRadius: 2,
-                    }} />
-                  </div>
-                </div>
-              );
-            })}
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, color: t.text }}>
+              Client overview
+            </div>
+
+            {clients.length === 0 ? (
+              <div style={{ fontSize: 12, color: t.muted, padding: '8px 0' }}>
+                No clients assigned to you yet.
+              </div>
+            ) : (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
+                gap: 12,
+              }}>
+                {clients.map((c, i) => {
+                  const colors = ['#6366F1', '#10B981', '#F59E0B', '#3B82F6'];
+                  const color = colors[i % colors.length];
+                  return (
+                    <div key={c.id} style={{
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      background: t.surf2,
+                      borderTop: `1px solid ${t.bord}`,
+                      borderRight: `1px solid ${t.bord}`,
+                      borderBottom: `1px solid ${t.bord}`,
+                      borderLeft: `3px solid ${color}`,
+                    }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: t.text }}>
+                        {c.name}
+                      </div>
+                      <div style={{ fontSize: 11, color: t.muted }}>
+                        {c.email}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
+        )}
 
       </div>
     </>
