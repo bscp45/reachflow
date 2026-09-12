@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -6,21 +6,38 @@ from enum import Enum
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
 class LeadStatus(str, Enum):
-    pending   = "pending"
-    calling   = "calling"
-    agreed    = "agreed"
-    declined  = "declined"
-    no_answer = "no_answer"
+    pending          = "pending"
+    pending_approval = "pending_approval"
+    calling          = "calling"
+    agreed           = "agreed"
+    declined         = "declined"
+    no_answer        = "no_answer"
 
 class UserRole(str, Enum):
-    super_admin   = "super_admin"
-    client_admin  = "client_admin"
-    client_viewer = "client_viewer"
+    super_admin       = "super_admin"
+    reachflow_manager = "reachflow_manager"
+    client_owner      = "client_owner"
+    client_manager    = "client_manager"
+    client_analyst    = "client_analyst"
 
 class Language(str, Enum):
     english = "english"
     hindi   = "hindi"
     telugu  = "telugu"
+
+# ── Sorting ───────────────────────────────────────────────────────────────────
+
+class LeadSortField(str, Enum):
+    """Columns the leads list can be sorted by."""
+    name        = "name"
+    score       = "score"
+    attempts    = "attempts"
+    last_called = "last_called"
+    created_at  = "created_at"
+
+class SortDirection(str, Enum):
+    asc  = "asc"
+    desc = "desc"
 
 # ── Lead schemas ──────────────────────────────────────────────────────────────
 
@@ -42,7 +59,39 @@ class LeadResponse(BaseModel):
     last_called: Optional[datetime]
     next_retry:  Optional[datetime]
     client_id:   int
+    assigned_to: Optional[int]
     created_at:  datetime
+
+    class Config:
+        from_attributes = True
+
+class PaginatedLeads(BaseModel):
+    """
+    Wraps the leads list with the total row count.
+
+    The frontend needs `total` to work out how many pages exist — without it
+    there is no way to render pagination controls when only one page of rows
+    has been fetched.
+    """
+    items: List[LeadResponse]
+    total: int
+    skip:  int
+    limit: int
+
+# ── Call log schemas ──────────────────────────────────────────────────────────
+
+class CallLogResponse(BaseModel):
+    id:           int
+    lead_id:      int
+    started_at:   datetime
+    ended_at:     Optional[datetime]
+    duration:     Optional[int]
+    status:       LeadStatus
+    transcript:   Optional[str]
+    summary:      Optional[str]
+    sentiment:    Optional[float]
+    language:     Language
+    vapi_call_id: Optional[str]
 
     class Config:
         from_attributes = True
@@ -50,10 +99,10 @@ class LeadResponse(BaseModel):
 # ── Auth schemas ──────────────────────────────────────────────────────────────
 
 class UserCreate(BaseModel):
-    name:     str
-    email:    str
-    password: str
-    role:     UserRole
+    name:      str
+    email:     str
+    password:  str
+    role:      UserRole
     client_id: Optional[int] = None
 
 class UserResponse(BaseModel):
@@ -93,11 +142,11 @@ class ClientCreate(BaseModel):
     email: str
 
 class ClientResponse(BaseModel):
-    id:           int
-    name:         str
-    email:        str
-    is_active:    bool
-    created_at:   datetime
+    id:         int
+    name:       str
+    email:      str
+    is_active:  bool
+    created_at: datetime
 
     class Config:
         from_attributes = True
