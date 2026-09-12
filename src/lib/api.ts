@@ -5,6 +5,7 @@
 import type {
   Lead,
   Client,
+  CallLog,
   CampaignStats,
   User,
   AuthToken,
@@ -12,7 +13,35 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// ── Helper — get auth headers ─────────────────────────────────────────────────
+// ── Shared types ──────────────────────────────────────────────────────────────
+
+export interface PaginatedLeads {
+  items: Lead[];
+  total: number;
+  skip:  number;
+  limit: number;
+}
+
+export type LeadSortField =
+  | 'name'
+  | 'score'
+  | 'attempts'
+  | 'last_called'
+  | 'created_at';
+
+export type SortDirection = 'asc' | 'desc';
+
+export interface LeadQuery {
+  skip?:     number;
+  limit?:    number;
+  status?:   string;
+  clientId?: number;
+  search?:   string;
+  sortBy?:   LeadSortField;
+  sortDir?:  SortDirection;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getAuthHeaders(): HeadersInit {
   const token = typeof window !== 'undefined'
@@ -25,11 +54,9 @@ function getAuthHeaders(): HeadersInit {
   };
 }
 
-// ── Helper — handle API errors ────────────────────────────────────────────────
-
 async function handleResponse<T>(res: Response): Promise<T> {
   if (res.status === 401) {
-    // Token expired or invalid — force logout
+    // Token expired or invalid — clear it and bounce to login
     if (typeof window !== 'undefined') {
       localStorage.removeItem('rf-token');
       localStorage.removeItem('rf-user');
@@ -39,18 +66,51 @@ async function handleResponse<T>(res: Response): Promise<T> {
   }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Request failed' }));
-    throw new Error(error.detail || `Error ${res.status}`);
+    const body = await res.json().catch(() => ({ detail: 'Request failed' }));
+    throw new Error(body.detail || `Error ${res.status}`);
   }
 
   return res.json();
+}
+
+/** Backend sends snake_case; the UI works in camelCase. */
+function toLead(raw: {
+  id: number;
+  name: string;
+  phone: string;
+  status: string;
+  attempts: number;
+  score: number;
+  sentiment: number | null;
+  language: string;
+  last_called: string | null;
+  next_retry: string | null;
+  client_id: number;
+  assigned_to: number | null;
+  created_at: string;
+}): Lead {
+  return {
+    id:         raw.id,
+    name:       raw.name,
+    phone:      raw.phone,
+    status:     raw.status as Lead['status'],
+    attempts:   raw.attempts,
+    score:      raw.score,
+    sentiment:  raw.sentiment ?? undefined,
+    language:   raw.language as Lead['language'],
+    lastCalled: raw.last_called ? new Date(raw.last_called) : null,
+    nextRetry:  raw.next_retry  ? new Date(raw.next_retry)  : null,
+    clientId:   raw.client_id,
+    assignedTo: raw.assigned_to ?? undefined,
+    createdAt:  new Date(raw.created_at),
+  };
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function loginStep1(
   email: string,
-  password: string
+  password: string,
 ): Promise<{ message: string; requires_otp: boolean; email: string }> {
   const res = await fetch(`${API_URL}/api/auth/login`, {
     method: 'POST',
@@ -60,10 +120,7 @@ export async function loginStep1(
   return handleResponse(res);
 }
 
-export async function verifyOtp(
-  email: string,
-  otp: string
-): Promise<AuthToken> {
+export async function verifyOtp(email: string, otp: string): Promise<AuthToken> {
   const res = await fetch(`${API_URL}/api/auth/verify-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -90,9 +147,7 @@ export async function verifyOtp(
 }
 
 export async function getMe(): Promise<User> {
-  const res = await fetch(`${API_URL}/api/auth/me`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await fetch(`${API_URL}/api/auth/me`, { headers: getAuthHeaders() });
 
   const data = await handleResponse<{
     id: number;
@@ -115,7 +170,7 @@ export async function getMe(): Promise<User> {
 
 export async function changePassword(
   currentPassword: string,
-  newPassword: string
+  newPassword: string,
 ): Promise<{ message: string }> {
   const res = await fetch(`${API_URL}/api/auth/change-password`, {
     method: 'POST',
@@ -130,58 +185,39 @@ export async function changePassword(
 
 // ── Leads ─────────────────────────────────────────────────────────────────────
 
-export async function getLeads(params?: {
-  skip?: number;
-  limit?: number;
-  status?: string;
-  clientId?: number;
-}): Promise<Lead[]> {
-  const query = new URLSearchParams();
-  if (params?.skip)     query.set('skip', String(params.skip));
-  if (params?.limit)    query.set('limit', String(params.limit));
-  if (params?.status)   query.set('status', params.status);
-  if (params?.clientId) query.set('client_id', String(params.clientId));
+export async function getLeads(params: LeadQuery = {}): Promise<PaginatedLeads> {
+  const q = new URLSearchParams();
 
-  const res = await fetch(`${API_URL}/api/leads/?${query}`, {
-    headers: getAuthHeaders(),
-  });
+  // skip can legitimately be 0, so check for undefined rather than falsiness
+  if (params.skip     !== undefined) q.set('skip',      String(params.skip));
+  if (params.limit    !== undefined) q.set('limit',     String(params.limit));
+  if (params.status)                 q.set('status',    params.status);
+  if (params.clientId !== undefined) q.set('client_id', String(params.clientId));
+  if (params.search)                 q.set('search',    params.search);
+  if (params.sortBy)                 q.set('sort_by',   params.sortBy);
+  if (params.sortDir)                q.set('sort_dir',  params.sortDir);
 
-  const data = await handleResponse<Array<{
-    id: number;
-    name: string;
-    phone: string;
-    status: string;
-    attempts: number;
-    score: number;
-    sentiment: number | null;
-    language: string;
-    last_called: string | null;
-    next_retry: string | null;
-    client_id: number;
-    created_at: string;
-  }>>(res);
+  const res = await fetch(`${API_URL}/api/leads/?${q}`, { headers: getAuthHeaders() });
 
-  return data.map(l => ({
-    id:         l.id,
-    name:       l.name,
-    phone:      l.phone,
-    status:     l.status as Lead['status'],
-    attempts:   l.attempts,
-    score:      l.score,
-    sentiment:  l.sentiment ?? undefined,
-    language:   l.language as Lead['language'],
-    lastCalled: l.last_called ? new Date(l.last_called) : null,
-    nextRetry:  l.next_retry  ? new Date(l.next_retry)  : null,
-    clientId:   l.client_id,
-    createdAt:  new Date(l.created_at),
-  }));
+  const data = await handleResponse<{
+    items: Parameters<typeof toLead>[0][];
+    total: number;
+    skip:  number;
+    limit: number;
+  }>(res);
+
+  return {
+    items: data.items.map(toLead),
+    total: data.total,
+    skip:  data.skip,
+    limit: data.limit,
+  };
 }
 
 export async function getLead(leadId: number): Promise<Lead> {
-  const res = await fetch(`${API_URL}/api/leads/${leadId}`, {
-    headers: getAuthHeaders(),
-  });
-  return handleResponse(res);
+  const res = await fetch(`${API_URL}/api/leads/${leadId}`, { headers: getAuthHeaders() });
+  const data = await handleResponse<Parameters<typeof toLead>[0]>(res);
+  return toLead(data);
 }
 
 export async function createLead(lead: {
@@ -200,14 +236,51 @@ export async function createLead(lead: {
       client_id: lead.clientId,
     }),
   });
-  return handleResponse(res);
+  const data = await handleResponse<Parameters<typeof toLead>[0]>(res);
+  return toLead(data);
+}
+
+// ── Call history ──────────────────────────────────────────────────────────────
+
+export async function getCallsForLead(leadId: number): Promise<CallLog[]> {
+  const res = await fetch(`${API_URL}/api/calls/lead/${leadId}`, {
+    headers: getAuthHeaders(),
+  });
+
+  const data = await handleResponse<Array<{
+    id: number;
+    lead_id: number;
+    started_at: string;
+    ended_at: string | null;
+    duration: number | null;
+    status: string;
+    transcript: string | null;
+    summary: string | null;
+    sentiment: number | null;
+    language: string;
+    vapi_call_id: string | null;
+  }>>(res);
+
+  return data.map(c => ({
+    id:         c.id,
+    leadId:     c.lead_id,
+    startedAt:  new Date(c.started_at),
+    endedAt:    c.ended_at ? new Date(c.ended_at) : undefined,
+    duration:   c.duration ?? undefined,
+    status:     c.status as CallLog['status'],
+    transcript: c.transcript ?? undefined,
+    summary:    c.summary ?? undefined,
+    sentiment:  c.sentiment ?? undefined,
+    language:   c.language as CallLog['language'],
+    vapiCallId: c.vapi_call_id ?? undefined,
+  }));
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 export async function getCampaignStats(clientId?: number): Promise<CampaignStats> {
-  const query = clientId ? `?client_id=${clientId}` : '';
-  const res = await fetch(`${API_URL}/api/leads/stats/campaign${query}`, {
+  const q = clientId !== undefined ? `?client_id=${clientId}` : '';
+  const res = await fetch(`${API_URL}/api/leads/stats/campaign${q}`, {
     headers: getAuthHeaders(),
   });
 
@@ -222,22 +295,20 @@ export async function getCampaignStats(clientId?: number): Promise<CampaignStats
   }>(res);
 
   return {
-    total:     data.total,
-    called:    data.called,
-    agreed:    data.agreed,
-    declined:  data.declined,
-    noAnswer:  data.no_answer,
-    pending:   data.pending,
-    calling:   data.calling,
+    total:    data.total,
+    called:   data.called,
+    agreed:   data.agreed,
+    declined: data.declined,
+    noAnswer: data.no_answer,
+    pending:  data.pending,
+    calling:  data.calling,
   };
 }
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
 export async function getClients(): Promise<Client[]> {
-  const res = await fetch(`${API_URL}/api/clients/`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await fetch(`${API_URL}/api/clients/`, { headers: getAuthHeaders() });
 
   const data = await handleResponse<Array<{
     id: number;
