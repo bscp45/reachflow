@@ -164,6 +164,15 @@ def get_lead(
     lead = scoped_lead_query(current_user, db).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail=f"Lead {lead_id} not found")
+
+    # Enforce client boundary
+    if current_user.role.value not in ["super_admin", "reachflow_manager"]:
+        if lead.client_id != current_user.client_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied — this lead belongs to another client"
+            )
+
     return lead
 
 
