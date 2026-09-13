@@ -7,6 +7,8 @@ import type {
   Client,
   CallLog,
   CampaignStats,
+  PipelineBoard,
+  PipelineStage,
   User,
   AuthToken,
 } from '@/types';
@@ -35,6 +37,7 @@ export interface LeadQuery {
   skip?:     number;
   limit?:    number;
   status?:   string;
+  stage?:    PipelineStage;
   clientId?: number;
   search?:   string;
   sortBy?:   LeadSortField;
@@ -73,12 +76,13 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json();
 }
 
-/** Backend sends snake_case; the UI works in camelCase. */
-function toLead(raw: {
+/** Shape the backend sends for a lead. */
+interface RawLead {
   id: number;
   name: string;
   phone: string;
   status: string;
+  pipeline_stage: string;
   attempts: number;
   score: number;
   sentiment: number | null;
@@ -88,21 +92,25 @@ function toLead(raw: {
   client_id: number;
   assigned_to: number | null;
   created_at: string;
-}): Lead {
+}
+
+/** Backend speaks snake_case; the UI works in camelCase. */
+function toLead(raw: RawLead): Lead {
   return {
-    id:         raw.id,
-    name:       raw.name,
-    phone:      raw.phone,
-    status:     raw.status as Lead['status'],
-    attempts:   raw.attempts,
-    score:      raw.score,
-    sentiment:  raw.sentiment ?? undefined,
-    language:   raw.language as Lead['language'],
-    lastCalled: raw.last_called ? new Date(raw.last_called) : null,
-    nextRetry:  raw.next_retry  ? new Date(raw.next_retry)  : null,
-    clientId:   raw.client_id,
-    assignedTo: raw.assigned_to ?? undefined,
-    createdAt:  new Date(raw.created_at),
+    id:            raw.id,
+    name:          raw.name,
+    phone:         raw.phone,
+    status:        raw.status as Lead['status'],
+    pipelineStage: raw.pipeline_stage as PipelineStage,
+    attempts:      raw.attempts,
+    score:         raw.score,
+    sentiment:     raw.sentiment ?? undefined,
+    language:      raw.language as Lead['language'],
+    lastCalled:    raw.last_called ? new Date(raw.last_called) : null,
+    nextRetry:     raw.next_retry  ? new Date(raw.next_retry)  : null,
+    clientId:      raw.client_id,
+    assignedTo:    raw.assigned_to ?? undefined,
+    createdAt:     new Date(raw.created_at),
   };
 }
 
@@ -188,10 +196,11 @@ export async function changePassword(
 export async function getLeads(params: LeadQuery = {}): Promise<PaginatedLeads> {
   const q = new URLSearchParams();
 
-  // skip can legitimately be 0, so check for undefined rather than falsiness
+  // skip can legitimately be 0, so test for undefined rather than falsiness
   if (params.skip     !== undefined) q.set('skip',      String(params.skip));
   if (params.limit    !== undefined) q.set('limit',     String(params.limit));
   if (params.status)                 q.set('status',    params.status);
+  if (params.stage)                  q.set('stage',     params.stage);
   if (params.clientId !== undefined) q.set('client_id', String(params.clientId));
   if (params.search)                 q.set('search',    params.search);
   if (params.sortBy)                 q.set('sort_by',   params.sortBy);
@@ -200,7 +209,7 @@ export async function getLeads(params: LeadQuery = {}): Promise<PaginatedLeads> 
   const res = await fetch(`${API_URL}/api/leads/?${q}`, { headers: getAuthHeaders() });
 
   const data = await handleResponse<{
-    items: Parameters<typeof toLead>[0][];
+    items: RawLead[];
     total: number;
     skip:  number;
     limit: number;
@@ -216,8 +225,7 @@ export async function getLeads(params: LeadQuery = {}): Promise<PaginatedLeads> 
 
 export async function getLead(leadId: number): Promise<Lead> {
   const res = await fetch(`${API_URL}/api/leads/${leadId}`, { headers: getAuthHeaders() });
-  const data = await handleResponse<Parameters<typeof toLead>[0]>(res);
-  return toLead(data);
+  return toLead(await handleResponse<RawLead>(res));
 }
 
 export async function createLead(lead: {
@@ -236,8 +244,48 @@ export async function createLead(lead: {
       client_id: lead.clientId,
     }),
   });
-  const data = await handleResponse<Parameters<typeof toLead>[0]>(res);
-  return toLead(data);
+  return toLead(await handleResponse<RawLead>(res));
+}
+
+// ── Pipeline ──────────────────────────────────────────────────────────────────
+
+export async function getPipelineBoard(clientId?: number): Promise<PipelineBoard> {
+  const q = clientId !== undefined ? `?client_id=${clientId}` : '';
+  const res = await fetch(`${API_URL}/api/leads/pipeline/board${q}`, {
+    headers: getAuthHeaders(),
+  });
+
+  const data = await handleResponse<{
+    columns: Array<{ stage: string; count: number; leads: RawLead[] }>;
+    terminal: Array<{ stage: string; count: number }>;
+    total: number;
+  }>(res);
+
+  return {
+    columns: data.columns.map(c => ({
+      stage: c.stage as PipelineStage,
+      count: c.count,
+      leads: c.leads.map(toLead),
+    })),
+    terminal: data.terminal.map(t => ({
+      stage: t.stage as PipelineStage,
+      count: t.count,
+    })),
+    total: data.total,
+  };
+}
+
+export async function updateLeadStage(
+  leadId: number,
+  stage: PipelineStage,
+  note?: string,
+): Promise<Lead> {
+  const res = await fetch(`${API_URL}/api/leads/${leadId}/stage`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ stage, note: note || null }),
+  });
+  return toLead(await handleResponse<RawLead>(res));
 }
 
 // ── Call history ──────────────────────────────────────────────────────────────
