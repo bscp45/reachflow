@@ -176,6 +176,13 @@ export async function getMe(): Promise<User> {
     role: string;
     client_id: number | null;
     is_active: boolean;
+    permissions: {
+      can_upload_leads: boolean;
+      can_start_campaign: boolean;
+      can_view_transcripts: boolean;
+      can_manage_analysts: boolean;
+      can_export_data: boolean;
+    };
   }>(res);
 
   return {
@@ -185,6 +192,13 @@ export async function getMe(): Promise<User> {
     role:     data.role as User['role'],
     clientId: data.client_id,
     isActive: data.is_active,
+    permissions: {
+      canUploadLeads:     data.permissions.can_upload_leads,
+      canStartCampaign:   data.permissions.can_start_campaign,
+      canViewTranscripts: data.permissions.can_view_transcripts,
+      canManageAnalysts:  data.permissions.can_manage_analysts,
+      canExportData:      data.permissions.can_export_data,
+    },
   };
 }
 

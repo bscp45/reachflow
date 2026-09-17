@@ -10,7 +10,7 @@ from app.core.security import (
     generate_otp,
     verify_otp,
 )
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_client_permissions
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
@@ -57,6 +57,27 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ClientPermissionsResponse(BaseModel):
+    can_upload_leads:     bool
+    can_start_campaign:   bool
+    can_view_transcripts: bool
+    can_manage_analysts:  bool
+    can_export_data:      bool
+
+class MeResponse(BaseModel):
+    """
+    /me's own response shape — kept separate from UserResponse because
+    `User.permissions` on the ORM model is a relationship (a list of
+    ClientPermission rows), not this computed, role-aware summary.
+    """
+    id:          int
+    name:        str
+    email:       str
+    role:        str
+    client_id:   Optional[int]
+    is_active:   bool
+    permissions: ClientPermissionsResponse
 
 # ── Register ──────────────────────────────────────────────────────────────────
 
@@ -186,13 +207,25 @@ def verify_otp_endpoint(req: OTPVerifyRequest, db: Session = Depends(get_db)):
 
 # ── Get current user ──────────────────────────────────────────────────────────
 
-@router.get("/me", response_model=UserResponse)
-def get_me(current_user: User = Depends(get_current_user)):
+@router.get("/me", response_model=MeResponse)
+def get_me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Returns the currently logged-in user's details.
+    Returns the currently logged-in user's details, plus their effective
+    permissions (see get_client_permissions for the role rules).
     Requires valid JWT token in Authorization header.
     """
-    return current_user
+    return MeResponse(
+        id=current_user.id,
+        name=current_user.name,
+        email=current_user.email,
+        role=current_user.role.value,
+        client_id=current_user.client_id,
+        is_active=current_user.is_active,
+        permissions=get_client_permissions(current_user, db),
+    )
 
 # ── Change password ───────────────────────────────────────────────────────────
 
