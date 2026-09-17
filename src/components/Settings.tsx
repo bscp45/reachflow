@@ -1,18 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Topbar from '@/components/layout/Topbar';
 import { useTheme } from '@/lib/theme-context';
-import { ROLE_META, type UserRole } from '@/types';
+import { useAuth } from '@/lib/auth-context';
+import { getMe, getClients, changePassword } from '@/lib/api';
+import { ROLE_META, type UserRole, type User as ApiUser } from '@/types';
 
-// ── Mock data — replace with real API calls later ─────────────────────────────
-const MOCK_PROFILE = {
-  name: 'Super Admin',
-  email: 'admin@reachflow.in',
-  phone: '+91 98765 43210',
-  company: 'ReachFlow',
-};
-
+// ── Mock data — Settings has no backend support for these yet (see docs/ARCHITECTURE.md) ──
 const MOCK_TEAM = [
   { id: 1, name: 'Super Admin',  email: 'admin@reachflow.in', role: 'super_admin'       as UserRole, lastActive: 'Active now' },
   { id: 2, name: 'Ravi Kumar',   email: 'ravi@reachflow.in',  role: 'reachflow_manager' as UserRole, lastActive: '30m ago' },
@@ -58,11 +53,21 @@ function Row({ label, children, t }: { label: string; children: React.ReactNode;
   );
 }
 
+// ── Not-yet-wired notice — this tab has no backing endpoint yet ───────────────
+function NotWiredNotice() {
+  return (
+    <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 10, padding: '12px 16px', fontSize: 12, color: '#D97706', lineHeight: 1.6 }}>
+      ⚠️ Not yet connected to the backend — changes on this tab aren&apos;t saved. See docs/ARCHITECTURE.md.
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function Settings() {
   const { dark, toggleTheme } = useTheme();
+  const { logout } = useAuth();
 
-  // Local state — wire to real API later
+  // Local state — no backing endpoint yet (see docs/ARCHITECTURE.md)
   const [callStart, setCallStart]       = useState(9);
   const [callEnd, setCallEnd]           = useState(21);
   const [noAnswerRetry, setNoAnswerRetry] = useState(2);
@@ -72,6 +77,61 @@ export default function Settings() {
   const [openaiConnected, setOpenaiConnected] = useState(true);
   const [twoFactor, setTwoFactor]       = useState(false);
   const [activeTab, setActiveTab]       = useState<'profile'|'compliance'|'team'|'integrations'|'security'>('profile');
+
+  // Profile — real data from GET /api/auth/me
+  const [profile, setProfile]     = useState<ApiUser | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const me = await getMe();
+        if (cancelled) return;
+        setProfile(me);
+
+        if (me.clientId != null) {
+          const clients = await getClients();
+          if (cancelled) return;
+          setCompanyName(clients.find(c => c.id === me.clientId)?.name ?? null);
+        } else {
+          setCompanyName('ReachFlow');
+        }
+      } catch (err) {
+        if (!cancelled) setProfileError(err instanceof Error ? err.message : 'Failed to load profile');
+      } finally {
+        if (!cancelled) setProfileLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
+
+  // Change password
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword]         = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwStatus, setPwStatus] = useState<{ kind: 'idle' | 'saving' | 'success' | 'error'; message?: string }>({ kind: 'idle' });
+
+  async function handleChangePassword() {
+    if (newPassword !== confirmPassword) {
+      setPwStatus({ kind: 'error', message: "New passwords don't match" });
+      return;
+    }
+    setPwStatus({ kind: 'saving' });
+    try {
+      await changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPwStatus({ kind: 'success', message: 'Password changed successfully' });
+    } catch (err) {
+      setPwStatus({ kind: 'error', message: err instanceof Error ? err.message : 'Failed to change password' });
+    }
+  }
 
   const t = {
     bg:    dark ? '#0A0D14' : '#F0F3FA',
@@ -122,20 +182,27 @@ export default function Settings() {
           {activeTab === 'profile' && (
             <>
               <Section title="Account profile" desc="Your personal account information" t={t}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
-                  <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'linear-gradient(135deg,#6366F1,#10B981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: '#fff' }}>SA</div>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>{MOCK_PROFILE.name}</div>
-                    <div style={{ fontSize: 12, color: t.muted }}>{MOCK_PROFILE.email}</div>
-                  </div>
-                  <button style={{ marginLeft: 'auto', padding: '7px 14px', background: 'transparent', border: `1px solid ${t.bord2}`, borderRadius: 8, color: t.text, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-                    Change photo
-                  </button>
-                </div>
-                <Row label="Full name" t={t}><span style={{ fontSize: 12, color: t.muted }}>{MOCK_PROFILE.name}</span></Row>
-                <Row label="Email" t={t}><span style={{ fontSize: 12, color: t.muted }}>{MOCK_PROFILE.email}</span></Row>
-                <Row label="Phone" t={t}><span style={{ fontSize: 12, color: t.muted }}>{MOCK_PROFILE.phone}</span></Row>
-                <Row label="Company" t={t}><span style={{ fontSize: 12, color: t.muted }}>{MOCK_PROFILE.company}</span></Row>
+                {profileLoading ? (
+                  <div style={{ fontSize: 12, color: t.muted }}>Loading…</div>
+                ) : profileError ? (
+                  <div style={{ fontSize: 12, color: '#EF4444' }}>{profileError}</div>
+                ) : profile && (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
+                      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'linear-gradient(135deg,#6366F1,#10B981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: '#fff' }}>
+                        {profile.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>{profile.name}</div>
+                        <div style={{ fontSize: 12, color: t.muted }}>{profile.email}</div>
+                      </div>
+                    </div>
+                    <Row label="Full name" t={t}><span style={{ fontSize: 12, color: t.muted }}>{profile.name}</span></Row>
+                    <Row label="Email" t={t}><span style={{ fontSize: 12, color: t.muted }}>{profile.email}</span></Row>
+                    <Row label="Role" t={t}><span style={{ fontSize: 12, color: t.muted }}>{ROLE_META[profile.role].label}</span></Row>
+                    <Row label="Company" t={t}><span style={{ fontSize: 12, color: t.muted }}>{companyName ?? '—'}</span></Row>
+                  </>
+                )}
               </Section>
 
               <Section title="Appearance" desc="Customize how ReachFlow looks" t={t}>
@@ -148,7 +215,7 @@ export default function Settings() {
               </Section>
 
               <Section title="Session" t={t}>
-                <button style={{
+                <button onClick={logout} style={{
                   padding: '9px 18px', background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.3)',
                   borderRadius: 8, color: '#EF4444', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
                 }}>
@@ -161,9 +228,7 @@ export default function Settings() {
           {/* ── COMPLIANCE TAB ── */}
           {activeTab === 'compliance' && (
             <>
-              <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 10, padding: '12px 16px', fontSize: 12, color: '#D97706', lineHeight: 1.6 }}>
-                ⏰ These settings control when and how often the AI calls leads. Changes apply to all future calls immediately.
-              </div>
+              <NotWiredNotice />
 
               <Section title="Call window (TRAI compliance)" desc="Outbound calls are only made within this time range, IST" t={t}>
                 <Row label="Call window start" t={t}>
@@ -195,6 +260,7 @@ export default function Settings() {
           {/* ── TEAM TAB ── */}
           {activeTab === 'team' && (
             <>
+              <NotWiredNotice />
               <Section title="Team members" desc="Manage who has access and what they can see" t={t}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {MOCK_TEAM.map(member => {
@@ -235,6 +301,8 @@ export default function Settings() {
 
           {/* ── INTEGRATIONS TAB ── */}
           {activeTab === 'integrations' && (
+            <>
+            <NotWiredNotice />
             <Section title="Connected services" desc="API integrations powering your AI calling pipeline" t={t}>
               <Row label="Vapi.ai — Voice calling" t={t}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -256,11 +324,53 @@ export default function Settings() {
                 <span style={{ fontSize: 11, color: '#10B981', fontWeight: 600 }}>● Connected</span>
               </Row>
             </Section>
+            </>
           )}
 
           {/* ── SECURITY TAB ── */}
           {activeTab === 'security' && (
             <>
+              <Section title="Change password" desc="Uses your current password to confirm the change" t={t}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 4 }}>
+                  <input
+                    type="password"
+                    placeholder="Current password"
+                    value={currentPassword}
+                    onChange={e => setCurrentPassword(e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+                  />
+                  <input
+                    type="password"
+                    placeholder="New password"
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Confirm new password"
+                    value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
+                  <button
+                    onClick={handleChangePassword}
+                    disabled={pwStatus.kind === 'saving' || !currentPassword || !newPassword || !confirmPassword}
+                    style={{
+                      padding: '8px 16px', background: '#6366F1', border: 'none', borderRadius: 8, color: '#fff',
+                      fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                      opacity: (pwStatus.kind === 'saving' || !currentPassword || !newPassword || !confirmPassword) ? 0.6 : 1,
+                    }}
+                  >
+                    {pwStatus.kind === 'saving' ? 'Saving…' : 'Update password'}
+                  </button>
+                  {pwStatus.kind === 'success' && <span style={{ fontSize: 12, color: '#10B981' }}>{pwStatus.message}</span>}
+                  {pwStatus.kind === 'error' && <span style={{ fontSize: 12, color: '#EF4444' }}>{pwStatus.message}</span>}
+                </div>
+              </Section>
+
               <Section title="Privacy & security" desc="Protect your account and your leads' data" t={t}>
                 <Row label="Two-factor authentication" t={t}>
                   <Toggle on={twoFactor} onChange={() => setTwoFactor(p => !p)} dark={dark} />

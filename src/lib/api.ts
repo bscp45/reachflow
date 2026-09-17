@@ -57,13 +57,25 @@ function getAuthHeaders(): HeadersInit {
   };
 }
 
+/**
+ * Auth endpoints that issue a session (login, OTP verification) return 401 for
+ * bad credentials, not an expired session — there's no session yet to expire.
+ * Their 401s should fall through to the normal error path so the backend's
+ * actual message (e.g. "Invalid email or password") reaches the caller.
+ */
+function isSessionlessAuthEndpoint(url: string): boolean {
+  return url.includes('/api/auth/login') || url.includes('/api/auth/verify-otp');
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
-  if (res.status === 401) {
+  if (res.status === 401 && !isSessionlessAuthEndpoint(res.url)) {
     // Token expired or invalid — clear it and bounce to login
     if (typeof window !== 'undefined') {
       localStorage.removeItem('rf-token');
       localStorage.removeItem('rf-user');
-      window.location.href = '/login';
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     throw new Error('Session expired. Please log in again.');
   }
