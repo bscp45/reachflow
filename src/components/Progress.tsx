@@ -46,7 +46,9 @@ function MoveDialog({
   onMoved: () => void;
   dark: boolean;
 }) {
-  const [stage, setStage]     = useState<PipelineStage>(lead.pipelineStage);
+  const [stage, setStage]     = useState<PipelineStage>(
+    SELECTABLE_STAGES.includes(lead.pipelineStage) ? lead.pipelineStage : SELECTABLE_STAGES[0]
+  );
   const [note, setNote]       = useState('');
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState<string | null>(null);
