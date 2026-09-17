@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Topbar from '@/components/layout/Topbar';
 import { useTheme } from '@/lib/theme-context';
 import { useAuth } from '@/lib/auth-context';
-import { getPipelineBoard, updateLeadStage } from '@/lib/api';
+import { getPipelineBoard, updateLeadStage, getLeads } from '@/lib/api';
 import {
   STAGE_META,
   SELECTABLE_STAGES,
@@ -46,7 +46,10 @@ function MoveDialog({
   onMoved: () => void;
   dark: boolean;
 }) {
-  const [stage, setStage]     = useState<PipelineStage>(lead.pipelineStage);
+  // The lead's current stage is excluded — selecting it would be a no-op.
+  const availableStages = SELECTABLE_STAGES.filter(s => s !== lead.pipelineStage);
+
+  const [stage, setStage]     = useState<PipelineStage>(availableStages[0]);
   const [note, setNote]       = useState('');
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState<string | null>(null);
@@ -113,9 +116,9 @@ function MoveDialog({
             outline: 'none', fontFamily: 'inherit',
           }}
         >
-          {SELECTABLE_STAGES.map(s => (
+          {availableStages.map(s => (
             <option key={s} value={s}>
-              {STAGE_META[s].label}{STAGE_META[s].terminal ? '  (ends pipeline)' : ''}
+              {STAGE_META[s].label}{STAGE_META[s].terminal ? '  (not in pipeline)' : ''}
             </option>
           ))}
         </select>
@@ -254,6 +257,184 @@ function LeadCard({
   );
 }
 
+// ── Stage leads panel ─────────────────────────────────────────────────────────
+
+function StageLeadsPanel({
+  stage, canMove, onMove, onClose, dark, refreshKey,
+}: {
+  stage: PipelineStage;
+  canMove: boolean;
+  onMove: (l: Lead) => void;
+  onClose: () => void;
+  dark: boolean;
+  refreshKey: number;
+}) {
+  const [leads, setLeads]     = useState<Lead[]>([]);
+  const [total, setTotal]     = useState(0);
+  const [skip, setSkip]       = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const limit = 20;
+
+  const t = {
+    surf:  dark ? '#111622' : '#FFFFFF',
+    surf2: dark ? '#181E2E' : '#F4F6FB',
+    bord:  dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.08)',
+    text:  dark ? '#E8EAF0' : '#111827',
+    muted: dark ? '#6B7280' : '#6B7280',
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    getLeads({ stage, skip, limit })
+      .then(data => {
+        if (cancelled) return;
+        setLeads(data.items);
+        setTotal(data.total);
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Could not load these leads');
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [stage, skip, refreshKey]);
+
+  const meta = STAGE_META[stage];
+  const from = total === 0 ? 0 : skip + 1;
+  const to   = Math.min(skip + limit, total);
+
+  return (
+    <>
+      <div onClick={onClose} style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)',
+        zIndex: 100, cursor: 'pointer',
+      }} />
+
+      <div style={{
+        position: 'fixed', right: 0, top: 0, bottom: 0, width: 420,
+        background: t.surf, borderLeft: `1px solid ${t.bord}`,
+        zIndex: 101, display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          padding: '20px 24px', borderBottom: `1px solid ${t.bord}`,
+          display: 'flex', justifyContent: 'space-between',
+          alignItems: 'flex-start', flexShrink: 0,
+        }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{
+                width: 9, height: 9, borderRadius: '50%',
+                background: meta.color, flexShrink: 0,
+              }} />
+              <span style={{ fontSize: 15, fontWeight: 700, color: t.text }}>
+                {meta.label}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: t.muted, marginTop: 3 }}>
+              {total} lead{total !== 1 ? 's' : ''}
+              {stage === 'do_not_call' && ' · read-only'}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            width: 28, height: 28, borderRadius: 6,
+            border: `1px solid ${t.bord}`, background: 'transparent',
+            color: t.muted, cursor: 'pointer', fontSize: 13,
+          }}>✕</button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: t.muted, padding: '12px 0' }}>
+              Loading leads…
+            </div>
+          )}
+
+          {error && (
+            <div style={{
+              background: 'rgba(239,68,68,.1)',
+              border: '1px solid rgba(239,68,68,.25)',
+              borderRadius: 8, padding: '10px 12px',
+              fontSize: 12, color: '#EF4444',
+            }}>
+              {error}
+            </div>
+          )}
+
+          {!loading && !error && leads.length === 0 && (
+            <div style={{
+              background: t.surf2, border: `1px solid ${t.bord}`,
+              borderRadius: 10, padding: '14px 16px',
+              fontSize: 12, color: t.muted, fontStyle: 'italic',
+            }}>
+              No leads in this stage.
+            </div>
+          )}
+
+          {!loading && !error && leads.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {leads.map(lead => (
+                <LeadCard
+                  key={lead.id}
+                  lead={lead}
+                  onMove={onMove}
+                  canMove={canMove}
+                  dark={dark}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {total > limit && (
+          <div style={{
+            padding: '12px 24px', borderTop: `1px solid ${t.bord}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            flexShrink: 0,
+          }}>
+            <span style={{ fontSize: 11, color: t.muted }}>
+              {from}–{to} of {total}
+            </span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => setSkip(s => Math.max(0, s - limit))}
+                disabled={skip === 0}
+                style={{
+                  padding: '6px 12px', background: 'transparent',
+                  border: `1px solid ${t.bord}`, borderRadius: 6,
+                  color: t.text, fontSize: 11, fontWeight: 600,
+                  cursor: skip === 0 ? 'not-allowed' : 'pointer',
+                  opacity: skip === 0 ? .5 : 1, fontFamily: 'inherit',
+                }}
+              >
+                Prev
+              </button>
+              <button
+                onClick={() => setSkip(s => s + limit)}
+                disabled={skip + limit >= total}
+                style={{
+                  padding: '6px 12px', background: 'transparent',
+                  border: `1px solid ${t.bord}`, borderRadius: 6,
+                  color: t.text, fontSize: 11, fontWeight: 600,
+                  cursor: skip + limit >= total ? 'not-allowed' : 'pointer',
+                  opacity: skip + limit >= total ? .5 : 1, fontFamily: 'inherit',
+                }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function Progress() {
@@ -264,6 +445,8 @@ export default function Progress() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [moving, setMoving]   = useState<Lead | null>(null);
+  const [openStage, setOpenStage] = useState<PipelineStage | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const canMove = user ? canMoveStage(user.role) : false;
 
@@ -465,7 +648,15 @@ export default function Progress() {
         {board.terminal.map(term => {
           const meta = STAGE_META[term.stage];
           return (
-            <div key={term.stage} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              key={term.stage}
+              onClick={() => setOpenStage(term.stage)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'transparent', border: 'none', padding: 0,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
               <span style={{
                 width: 8, height: 8, borderRadius: 2,
                 background: meta.color, flexShrink: 0,
@@ -474,16 +665,28 @@ export default function Progress() {
               <span style={{ fontSize: 12, fontWeight: 700, color: meta.color }}>
                 {term.count}
               </span>
-            </div>
+            </button>
           );
         })}
       </div>
+
+      {openStage && (
+        <StageLeadsPanel
+          key={openStage}
+          stage={openStage}
+          canMove={canMove && openStage !== 'do_not_call'}
+          onMove={setMoving}
+          onClose={() => setOpenStage(null)}
+          dark={dark}
+          refreshKey={refreshKey}
+        />
+      )}
 
       {moving && (
         <MoveDialog
           lead={moving}
           onClose={() => setMoving(null)}
-          onMoved={load}
+          onMoved={() => { load(); setRefreshKey(k => k + 1); }}
           dark={dark}
         />
       )}

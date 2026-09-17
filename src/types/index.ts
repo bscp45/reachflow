@@ -98,6 +98,14 @@ export type UserRole =
   | 'client_manager'
   | 'client_analyst';
 
+export interface UserPermissions {
+  canUploadLeads: boolean;
+  canStartCampaign: boolean;
+  canViewTranscripts: boolean;
+  canManageAnalysts: boolean;
+  canExportData: boolean;
+}
+
 export interface User {
   id: number;
   name: string;
@@ -105,6 +113,7 @@ export interface User {
   role: UserRole;
   clientId: number | null;
   isActive: boolean;
+  permissions: UserPermissions;
 }
 
 export interface AuthToken {

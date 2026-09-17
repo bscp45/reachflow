@@ -1,7 +1,16 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import type { User, AuthToken, UserRole } from '@/types';
+import type { User, AuthToken, UserRole, UserPermissions } from '@/types';
+import { getMe } from '@/lib/api';
+
+const NO_PERMISSIONS: UserPermissions = {
+  canUploadLeads:     false,
+  canStartCampaign:   false,
+  canViewTranscripts: false,
+  canManageAnalysts:  false,
+  canExportData:      false,
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -10,7 +19,7 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (token: AuthToken) => void;
+  login: (token: AuthToken) => Promise<void>;
   logout: () => void;
   hasRole: (role: UserRole) => boolean;
   isReachFlowStaff: boolean;
@@ -25,7 +34,7 @@ const AuthContext = createContext<AuthContextType>({
   token: null,
   isLoading: true,
   isAuthenticated: false,
-  login: () => {},
+  login: async () => {},
   logout: () => {},
   hasRole: () => false,
   isReachFlowStaff: false,
@@ -59,20 +68,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = (authToken: AuthToken) => {
-    const userData: User = {
-      id:       authToken.userId,
-      name:     authToken.name,
-      email:    '',
-      role:     authToken.role,
-      clientId: authToken.clientId,
-      isActive: true,
-    };
-
+  const login = async (authToken: AuthToken): Promise<void> => {
+    // Persist the token first — getMe() reads it straight out of localStorage
     setToken(authToken.accessToken);
-    setUser(userData);
-
     localStorage.setItem('rf-token', authToken.accessToken);
+
+    let userData: User;
+    try {
+      userData = await getMe();
+    } catch {
+      // /me failed — fall back to the token's claims with permissions
+      // denied by default until the next successful /me call.
+      userData = {
+        id:          authToken.userId,
+        name:        authToken.name,
+        email:       '',
+        role:        authToken.role,
+        clientId:    authToken.clientId,
+        isActive:    true,
+        permissions: NO_PERMISSIONS,
+      };
+    }
+
+    setUser(userData);
     localStorage.setItem('rf-user', JSON.stringify(userData));
   };
 
