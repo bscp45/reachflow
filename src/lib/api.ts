@@ -57,13 +57,25 @@ function getAuthHeaders(): HeadersInit {
   };
 }
 
+/**
+ * Auth endpoints that issue a session (login, OTP verification) return 401 for
+ * bad credentials, not an expired session — there's no session yet to expire.
+ * Their 401s should fall through to the normal error path so the backend's
+ * actual message (e.g. "Invalid email or password") reaches the caller.
+ */
+function isSessionlessAuthEndpoint(url: string): boolean {
+  return url.includes('/api/auth/login') || url.includes('/api/auth/verify-otp');
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
-  if (res.status === 401) {
+  if (res.status === 401 && !isSessionlessAuthEndpoint(res.url)) {
     // Token expired or invalid — clear it and bounce to login
     if (typeof window !== 'undefined') {
       localStorage.removeItem('rf-token');
       localStorage.removeItem('rf-user');
-      window.location.href = '/login';
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     throw new Error('Session expired. Please log in again.');
   }
@@ -164,6 +176,13 @@ export async function getMe(): Promise<User> {
     role: string;
     client_id: number | null;
     is_active: boolean;
+    permissions: {
+      can_upload_leads: boolean;
+      can_start_campaign: boolean;
+      can_view_transcripts: boolean;
+      can_manage_analysts: boolean;
+      can_export_data: boolean;
+    };
   }>(res);
 
   return {
@@ -173,6 +192,13 @@ export async function getMe(): Promise<User> {
     role:     data.role as User['role'],
     clientId: data.client_id,
     isActive: data.is_active,
+    permissions: {
+      canUploadLeads:     data.permissions.can_upload_leads,
+      canStartCampaign:   data.permissions.can_start_campaign,
+      canViewTranscripts: data.permissions.can_view_transcripts,
+      canManageAnalysts:  data.permissions.can_manage_analysts,
+      canExportData:      data.permissions.can_export_data,
+    },
   };
 }
 

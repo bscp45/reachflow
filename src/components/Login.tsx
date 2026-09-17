@@ -47,7 +47,7 @@ export default function Login() {
     setLoading(true);
     try {
       const authToken = await verifyOtp(email, otp);
-      login(authToken);
+      await login(authToken);
       router.push('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid OTP');

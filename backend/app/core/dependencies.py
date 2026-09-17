@@ -151,23 +151,22 @@ def get_client_scope(
 
 # ── Permission checker for client users ──────────────────────────────────────
 
-def check_permission(
-    current_user: User,
-    permission: str,
-    db: Session,
-) -> bool:
+PERMISSION_FIELDS = (
+    "can_upload_leads",
+    "can_start_campaign",
+    "can_view_transcripts",
+    "can_manage_analysts",
+    "can_export_data",
+)
+
+
+def get_client_permissions(current_user: User, db: Session) -> dict:
     """
-    Check if a client user has a specific permission.
+    All five permission flags for the current user, in one query.
     Super Admin and ReachFlow Manager always have all permissions.
     Client Owner always has all permissions within their client.
-    Client Manager and Client Analyst need explicit permission grant.
-
-    Permissions:
-      can_upload_leads
-      can_start_campaign
-      can_view_transcripts
-      can_manage_analysts
-      can_export_data
+    Client Manager and Client Analyst need an explicit grant, defaulting
+    to none when no ClientPermission row exists for them.
     """
     from app.models import ClientPermission
 
@@ -177,7 +176,7 @@ def check_permission(
         UserRole.reachflow_manager,
         UserRole.client_owner,
     ]:
-        return True
+        return {field: True for field in PERMISSION_FIELDS}
 
     # Client Manager and Analyst — check explicit permissions table
     perm = db.query(ClientPermission).filter(
@@ -186,6 +185,15 @@ def check_permission(
     ).first()
 
     if not perm:
-        return False
+        return {field: False for field in PERMISSION_FIELDS}
 
-    return getattr(perm, permission, False)
+    return {field: getattr(perm, field) for field in PERMISSION_FIELDS}
+
+
+def check_permission(
+    current_user: User,
+    permission: str,
+    db: Session,
+) -> bool:
+    """Check if a client user has a specific permission — see get_client_permissions."""
+    return get_client_permissions(current_user, db)[permission]

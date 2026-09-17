@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Topbar from '@/components/layout/Topbar';
 import { useTheme } from '@/lib/theme-context';
+import { useAuth } from '@/lib/auth-context';
 import { getLeads, getCallsForLead } from '@/lib/api';
 import type { LeadSortField, SortDirection } from '@/lib/api';
 import type { Lead, LeadStatus, CallLog } from '@/types';
@@ -363,6 +364,8 @@ function TranscriptDrawer({
 
 export default function CallData() {
   const { dark } = useTheme();
+  const { user } = useAuth();
+  const canViewTranscripts = user?.permissions.canViewTranscripts ?? false;
 
   // Query state — every change here triggers a refetch
   const [page, setPage]           = useState(1);
@@ -534,6 +537,11 @@ export default function CallData() {
           })}
         </div>
 
+        {/*
+          Not gated on can_export_data — the backend never enforces that
+          permission on any endpoint, so restricting this in the UI would
+          be stricter than the API actually is. Backend gap, not a frontend one.
+        */}
         <button
           onClick={() => exportCSV(leads)}
           disabled={leads.length === 0}
@@ -718,7 +726,11 @@ export default function CallData() {
 
                     {/* Transcript */}
                     <td style={td}>
-                      {hasBeenCalled ? (
+                      {!hasBeenCalled ? (
+                        <span style={{ fontSize: 11, color: t.muted, fontStyle: 'italic' }}>
+                          No call yet
+                        </span>
+                      ) : canViewTranscripts ? (
                         <button onClick={() => setDrawerLead(lead)} style={{
                           padding: '4px 10px', borderRadius: 6,
                           border: `1px solid ${t.bord2}`, background: 'transparent',
@@ -729,7 +741,7 @@ export default function CallData() {
                         </button>
                       ) : (
                         <span style={{ fontSize: 11, color: t.muted, fontStyle: 'italic' }}>
-                          No call yet
+                          No transcript access
                         </span>
                       )}
                     </td>
