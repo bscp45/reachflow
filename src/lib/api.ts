@@ -67,6 +67,16 @@ function isSessionlessAuthEndpoint(url: string): boolean {
   return url.includes('/api/auth/login') || url.includes('/api/auth/verify-otp');
 }
 
+/**
+ * The backend stores naive UTC datetimes and serializes them without a
+ * timezone marker, so `new Date(s)` would parse them as local time. Append
+ * 'Z' when the string has no zone info so it's interpreted as UTC.
+ */
+function parseUtc(s: string): Date {
+  const hasTimezone = /Z$|[+-]\d{2}:\d{2}$/.test(s);
+  return new Date(hasTimezone ? s : `${s}Z`);
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (res.status === 401 && !isSessionlessAuthEndpoint(res.url)) {
     // Token expired or invalid — clear it and bounce to login
@@ -118,11 +128,11 @@ function toLead(raw: RawLead): Lead {
     score:         raw.score,
     sentiment:     raw.sentiment ?? undefined,
     language:      raw.language as Lead['language'],
-    lastCalled:    raw.last_called ? new Date(raw.last_called) : null,
-    nextRetry:     raw.next_retry  ? new Date(raw.next_retry)  : null,
+    lastCalled:    raw.last_called ? parseUtc(raw.last_called) : null,
+    nextRetry:     raw.next_retry  ? parseUtc(raw.next_retry)  : null,
     clientId:      raw.client_id,
     assignedTo:    raw.assigned_to ?? undefined,
-    createdAt:     new Date(raw.created_at),
+    createdAt:     parseUtc(raw.created_at),
   };
 }
 
@@ -338,8 +348,8 @@ export async function getCallsForLead(leadId: number): Promise<CallLog[]> {
   return data.map(c => ({
     id:         c.id,
     leadId:     c.lead_id,
-    startedAt:  new Date(c.started_at),
-    endedAt:    c.ended_at ? new Date(c.ended_at) : undefined,
+    startedAt:  parseUtc(c.started_at),
+    endedAt:    c.ended_at ? parseUtc(c.ended_at) : undefined,
     duration:   c.duration ?? undefined,
     status:     c.status as CallLog['status'],
     transcript: c.transcript ?? undefined,
@@ -397,7 +407,7 @@ export async function getClients(): Promise<Client[]> {
     name:      c.name,
     email:     c.email,
     isActive:  c.is_active,
-    createdAt: new Date(c.created_at),
+    createdAt: parseUtc(c.created_at),
   }));
 }
 

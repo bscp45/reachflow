@@ -10,6 +10,7 @@ from app.api import leads as leads_router
 from app.api import clients as clients_router
 from app.api import auth as auth_router
 from app.api import calls as calls_router
+from app.api import webhooks as webhooks_router
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 class Settings(BaseSettings):
@@ -59,6 +60,7 @@ app.include_router(leads_router.router)
 app.include_router(clients_router.router)
 app.include_router(auth_router.router)
 app.include_router(calls_router.router)
+app.include_router(webhooks_router.router)
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/")
