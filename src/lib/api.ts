@@ -430,3 +430,110 @@ export async function deleteClient(clientId: number): Promise<{ message: string 
   });
   return handleResponse(res);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Add these to src/lib/api.ts
+//
+// Place the types near the other shared types at the top, and the functions
+// in a new "Uploads" section — above the Clients section reads naturally.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Types (add near PaginatedLeads) ───────────────────────────────────────────
+
+export interface SkippedRow {
+  row: number;
+  reason: string;
+  detail: string;
+}
+
+export interface UploadResult {
+  imported: number;
+  skipped: SkippedRow[];
+  totalRows: number;
+  needsApproval: boolean;
+  message: string;
+}
+
+// ── Uploads ───────────────────────────────────────────────────────────────────
+
+/**
+ * Upload a CSV or Excel file of leads.
+ *
+ * clientId is only used by ReachFlow staff — for client users the backend
+ * takes the client from their token and ignores anything sent here.
+ */
+export async function uploadLeads(
+  file: File,
+  clientId?: number,
+): Promise<UploadResult> {
+  const form = new FormData();
+  form.append('file', file);
+
+  const query = clientId !== undefined ? `?client_id=${clientId}` : '';
+
+  const token = typeof window !== 'undefined'
+    ? localStorage.getItem('rf-token')
+    : null;
+
+  // Content-Type is deliberately omitted — the browser sets it along with
+  // the multipart boundary, and setting it by hand breaks the upload.
+  const res = await fetch(`${API_URL}/api/uploads/leads${query}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+
+  const data = await handleResponse<{
+    imported: number;
+    skipped: Array<{ row: number; reason: string; detail: string }>;
+    total_rows: number;
+    needs_approval: boolean;
+    message: string;
+  }>(res);
+
+  return {
+    imported: data.imported,
+    skipped: data.skipped,
+    totalRows: data.total_rows,
+    needsApproval: data.needs_approval,
+    message: data.message,
+  };
+}
+
+/**
+ * Download the CSV template.
+ *
+ * Fetched rather than linked because the endpoint requires authentication —
+ * a plain <a href> would arrive without the token and get a 401.
+ */
+export async function downloadTemplate(): Promise<void> {
+  const token = typeof window !== 'undefined'
+    ? localStorage.getItem('rf-token')
+    : null;
+
+  const res = await fetch(`${API_URL}/api/uploads/template`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!res.ok) throw new Error('Could not download the template');
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'reachflow-leads-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Release leads sitting in pending_approval. Client Owner and above. */
+export async function approvePendingLeads(
+  clientId?: number,
+): Promise<{ approved: number; message: string }> {
+  const query = clientId !== undefined ? `?client_id=${clientId}` : '';
+  const res = await fetch(`${API_URL}/api/uploads/approve${query}`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
