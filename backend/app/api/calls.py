@@ -1,9 +1,8 @@
 """
 calls.py — Call history, and starting calls.
 
-Three things live here:
-
   GET  /api/calls/lead/{id}   the conversation history for one lead
+  GET  /api/calls/status      whether calling is possible right now
   POST /api/calls/start       place one call, inline
   POST /api/calls/start-batch queue calls for a set of leads
 
@@ -27,7 +26,10 @@ from app.models import (
 from app.schemas import CallLogResponse
 from app.core.dependencies import get_current_user, check_permission
 from app.services import vapi
-from app.services.compliance import check_call_allowed
+from app.services.compliance import (
+    check_call_allowed, within_call_window, next_window_open, now_ist,
+    CALL_WINDOW_START, CALL_WINDOW_END,
+)
 from app.tasks import place_batch_calls
 
 log = logging.getLogger(__name__)
@@ -40,6 +42,16 @@ MAX_BATCH_SIZE = 200
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
+
+class CallingStatus(BaseModel):
+    """Whether calls can be placed right now, and why not if they cannot."""
+    can_call: bool
+    reason: str | None = None
+    window_opens_at: str | None = None     # ISO, only when currently closed
+    window_start_hour: int
+    window_end_hour: int
+    server_time_ist: str
+
 
 class StartCallRequest(BaseModel):
     lead_id: int
@@ -104,10 +116,50 @@ def lead_not_callable(lead: Lead) -> str | None:
     if lead.pipeline_stage == PipelineStage.unreachable:
         return "This lead has exhausted its retry attempts"
 
+    if lead.status == LeadStatus.pending_approval:
+        return "These leads are waiting for approval before calling can start"
+
     if not lead.phone or len(lead.phone.replace(" ", "")) < 10:
         return "This lead has no usable phone number"
 
     return None
+
+
+# ── Calling status ────────────────────────────────────────────────────────────
+
+@router.get("/status", response_model=CallingStatus)
+def calling_status(current_user: User = Depends(get_current_user)):
+    """
+    Whether calling is possible at this moment.
+
+    The UI needs this because the calling window is a server-side rule the
+    browser knows nothing about. Without it, at 10pm every row looks
+    callable and every click returns a 409 — the page appears functional
+    and nothing works.
+    """
+    now = now_ist()
+
+    if not within_call_window(now):
+        reopen = next_window_open(now)
+        return CallingStatus(
+            can_call=False,
+            reason=(
+                f"Outside the permitted calling window "
+                f"({CALL_WINDOW_START}:00–{CALL_WINDOW_END}:00 IST). "
+                f"Calling resumes {reopen:%d %b at %H:%M}."
+            ),
+            window_opens_at=reopen.isoformat(),
+            window_start_hour=CALL_WINDOW_START,
+            window_end_hour=CALL_WINDOW_END,
+            server_time_ist=now.isoformat(),
+        )
+
+    return CallingStatus(
+        can_call=True,
+        window_start_hour=CALL_WINDOW_START,
+        window_end_hour=CALL_WINDOW_END,
+        server_time_ist=now.isoformat(),
+    )
 
 
 # ── Call history ──────────────────────────────────────────────────────────────
@@ -194,7 +246,7 @@ async def start_call(
             client_name=client.name if client else "",
         )
     except vapi.VapiError as exc:
-        # Surfaced as 502 — the request was valid, the upstream refused it
+        # 502 — the request was valid, the upstream refused it
         log.error("Vapi call failed for lead %s: %s", lead.id, exc)
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -243,10 +295,17 @@ def start_batch(
             detail="You don't have permission to start calls",
         )
 
-    # One compliance check for the batch. The window applies to all of them.
-    compliance = check_call_allowed("")
-    if not compliance.allowed and "do not call" not in (compliance.reason or "").lower():
-        raise HTTPException(status_code=409, detail=compliance.reason)
+    # The calling window applies to the whole batch, so check it once
+    if not within_call_window():
+        reopen = next_window_open()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Outside the permitted calling window "
+                f"({CALL_WINDOW_START}:00–{CALL_WINDOW_END}:00 IST). "
+                f"Calling resumes {reopen:%d %b at %H:%M}."
+            ),
+        )
 
     accepted: list[int] = []
     rejected: list[RejectedLead] = []

@@ -2,10 +2,15 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Topbar from '@/components/layout/Topbar';
+import CallButton, { uncallableReason } from '@/components/CallButton';
 import { useTheme } from '@/lib/theme-context';
 import { useAuth } from '@/lib/auth-context';
-import { getLeads, getCallsForLead } from '@/lib/api';
-import type { LeadSortField, SortDirection } from '@/lib/api';
+import {
+  getLeads, getCallsForLead, getCallingStatus, startBatchCalls,
+} from '@/lib/api';
+import type {
+  LeadSortField, SortDirection, CallingStatus, StartBatchResult,
+} from '@/lib/api';
 import type { Lead, LeadStatus, CallLog } from '@/types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -37,12 +42,11 @@ const AVATAR_COLORS = [
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 350;
 
-// Maps a table column to the backend's sort field name
 const SORT_COLUMNS: Array<{ key: LeadSortField; label: string; width: number }> = [
-  { key: 'name',        label: 'Lead',        width: 220 },
-  { key: 'attempts',    label: 'Attempts',    width: 110 },
-  { key: 'last_called', label: 'Last called', width: 140 },
-  { key: 'score',       label: 'Score',       width: 130 },
+  { key: 'name',        label: 'Lead',        width: 210 },
+  { key: 'attempts',    label: 'Attempts',    width: 100 },
+  { key: 'last_called', label: 'Last called', width: 120 },
+  { key: 'score',       label: 'Score',       width: 120 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -50,10 +54,10 @@ const SORT_COLUMNS: Array<{ key: LeadSortField; label: string; width: number }> 
 function timeAgo(d: Date | null): string {
   if (!d) return '—';
   const mins = Math.floor((Date.now() - d.getTime()) / 60000);
-  if (mins < 1)    return 'Just now';
-  if (mins < 60)   return `${mins}m ago`;
+  if (mins < 1)  return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24)    return `${hrs}h ago`;
+  if (hrs < 24)  return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
@@ -65,11 +69,11 @@ function timeUntil(d: Date | null): { text: string; tone: string } | null {
   const hrs  = Math.floor(diff / 3600000);
   const mins = Math.floor((diff % 3600000) / 60000);
 
-  if (hrs === 0) return { text: `${mins}m`,        tone: '#EF4444' };
+  if (hrs === 0) return { text: `${mins}m`,         tone: '#EF4444' };
   if (hrs < 6)   return { text: `${hrs}h ${mins}m`, tone: '#F59E0B' };
 
   const days = Math.floor(hrs / 24);
-  if (days > 0)  return { text: `${days}d`,        tone: '#10B981' };
+  if (days > 0)  return { text: `${days}d`,         tone: '#10B981' };
   return { text: `${hrs}h`, tone: '#10B981' };
 }
 
@@ -88,32 +92,22 @@ function formatDuration(seconds?: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-/**
- * The backend stores transcripts as plain text, one line per turn,
- * formatted "Speaker: text". Split it back out for display.
- */
+/** The backend stores transcripts as "Speaker: text" lines. Split for display. */
 function parseTranscript(raw?: string): Array<{ speaker: string; text: string }> {
   if (!raw) return [];
   return raw.split('\n').filter(Boolean).map(line => {
     const idx = line.indexOf(':');
     if (idx === -1) return { speaker: '', text: line };
-    return {
-      speaker: line.slice(0, idx).trim(),
-      text:    line.slice(idx + 1).trim(),
-    };
+    return { speaker: line.slice(0, idx).trim(), text: line.slice(idx + 1).trim() };
   });
 }
 
 function exportCSV(leads: Lead[]): void {
   const rows = [['Name', 'Phone', 'Status', 'Attempts', 'Last Called', 'Score', 'Language']];
   leads.forEach(l => rows.push([
-    l.name,
-    l.phone,
-    l.status,
-    String(l.attempts),
+    l.name, l.phone, l.status, String(l.attempts),
     l.lastCalled ? l.lastCalled.toLocaleDateString('en-IN') : '—',
-    String(l.score),
-    l.language,
+    String(l.score), l.language,
   ]));
 
   const csv = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
@@ -142,16 +136,12 @@ function TranscriptDrawer({
 
   useEffect(() => {
     let cancelled = false;
-
     getCallsForLead(lead.id)
       .then(data => { if (!cancelled) setCalls(data); })
       .catch(err => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Could not load call history');
-        }
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load call history');
       })
       .finally(() => { if (!cancelled) setLoading(false); });
-
     return () => { cancelled = true; };
   }, [lead.id]);
 
@@ -175,7 +165,6 @@ function TranscriptDrawer({
         background: t.surf, borderLeft: `1px solid ${t.bord}`,
         zIndex: 101, display: 'flex', flexDirection: 'column', overflowY: 'auto',
       }}>
-        {/* Header */}
         <div style={{
           padding: '20px 24px', borderBottom: `1px solid ${t.bord}`,
           display: 'flex', justifyContent: 'space-between',
@@ -195,18 +184,16 @@ function TranscriptDrawer({
         </div>
 
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-          {/* Lead details */}
           <div>
             <div style={sectionTitle}>Lead details</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {[
-                { label: 'Status',     value: meta.label,                        color: meta.color },
-                { label: 'Score',      value: `${lead.score}/100`,               color: scoreColor(lead.score) },
-                { label: 'Attempts',   value: String(lead.attempts) },
+                { label: 'Status',      value: meta.label,            color: meta.color },
+                { label: 'Score',       value: `${Math.round(lead.score)}/100`, color: scoreColor(lead.score) },
+                { label: 'Attempts',    value: String(lead.attempts) },
                 { label: 'Last called', value: timeAgo(lead.lastCalled) },
-                { label: 'Next retry', value: retry?.text ?? (lead.status === 'agreed' ? 'Complete' : 'Not scheduled') },
-                { label: 'Language',   value: lead.language.charAt(0).toUpperCase() + lead.language.slice(1) },
+                { label: 'Next retry',  value: retry?.text ?? (lead.status === 'agreed' ? 'Complete' : 'Not scheduled') },
+                { label: 'Language',    value: lead.language.charAt(0).toUpperCase() + lead.language.slice(1) },
               ].map(item => (
                 <div key={item.label} style={{
                   background: t.surf2, borderRadius: 8,
@@ -224,7 +211,6 @@ function TranscriptDrawer({
             </div>
           </div>
 
-          {/* Call history */}
           <div>
             <div style={sectionTitle}>
               Call history {calls.length > 0 && `(${calls.length})`}
@@ -257,7 +243,6 @@ function TranscriptDrawer({
               </div>
             )}
 
-            {/* Newest first, as returned by the API */}
             {calls.map((call, idx) => {
               const lines = parseTranscript(call.transcript);
               const sentColor =
@@ -270,7 +255,6 @@ function TranscriptDrawer({
                   background: t.surf2, border: `1px solid ${t.bord}`,
                   borderRadius: 10, padding: '14px 16px', marginBottom: 10,
                 }}>
-                  {/* Call header */}
                   <div style={{
                     display: 'flex', justifyContent: 'space-between',
                     alignItems: 'center', marginBottom: 10,
@@ -287,15 +271,9 @@ function TranscriptDrawer({
                     </div>
                   </div>
 
-                  {/* Sentiment */}
                   {call.sentiment !== undefined && (
-                    <div style={{
-                      display: 'flex', alignItems: 'center',
-                      gap: 8, marginBottom: 10,
-                    }}>
-                      <span style={{ fontSize: 10, color: t.muted, minWidth: 54 }}>
-                        Sentiment
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <span style={{ fontSize: 10, color: t.muted, minWidth: 54 }}>Sentiment</span>
                       <div style={{
                         flex: 1, height: 5, borderRadius: 3,
                         background: dark ? '#1E2438' : '#E5E9F0',
@@ -306,15 +284,14 @@ function TranscriptDrawer({
                         }} />
                       </div>
                       <span style={{
-                        fontSize: 11, fontWeight: 700,
-                        color: sentColor, minWidth: 30, textAlign: 'right',
+                        fontSize: 11, fontWeight: 700, color: sentColor,
+                        minWidth: 30, textAlign: 'right',
                       }}>
                         {Math.round(call.sentiment)}%
                       </span>
                     </div>
                   )}
 
-                  {/* AI summary */}
                   {call.summary && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{
@@ -327,7 +304,6 @@ function TranscriptDrawer({
                     </div>
                   )}
 
-                  {/* Transcript */}
                   {lines.length > 0 && (
                     <div>
                       <div style={{
@@ -365,27 +341,31 @@ function TranscriptDrawer({
 export default function CallData() {
   const { dark } = useTheme();
   const { user } = useAuth();
-  const canViewTranscripts = user?.permissions.canViewTranscripts ?? false;
 
-  // Query state — every change here triggers a refetch
-  const [page, setPage]           = useState(1);
-  const [filter, setFilter]       = useState<LeadStatus | 'all'>('all');
-  const [sortBy, setSortBy]       = useState<LeadSortField>('created_at');
-  const [sortDir, setSortDir]     = useState<SortDirection>('desc');
+  const [page, setPage]       = useState(1);
+  const [filter, setFilter]   = useState<LeadStatus | 'all'>('all');
+  const [sortBy, setSortBy]   = useState<LeadSortField>('created_at');
+  const [sortDir, setSortDir] = useState<SortDirection>('desc');
 
-  // Search is held twice: what the user typed, and the debounced value
-  // that actually goes to the API. Without this, every keystroke fires
-  // a request.
+  // Held twice: what the user typed, and the debounced value sent to the API
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm]   = useState('');
 
-  // Data state
   const [leads, setLeads]     = useState<Lead[]>([]);
   const [total, setTotal]     = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
 
   const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
+
+  // Calling
+  const [callingStatus, setCallingStatus] = useState<CallingStatus | null>(null);
+  const [selected, setSelected]           = useState<Set<number>>(new Set());
+  const [batchBusy, setBatchBusy]         = useState(false);
+  const [batchResult, setBatchResult]     = useState<StartBatchResult | null>(null);
+  const [batchError, setBatchError]       = useState<string | null>(null);
+
+  const canStartCalls = user?.permissions?.canStartCampaign ?? false;
 
   const t = {
     bg:    dark ? '#0A0D14' : '#F0F3FA',
@@ -398,15 +378,22 @@ export default function CallData() {
     muted: dark ? '#6B7280' : '#6B7280',
   };
 
-  // ── Debounce the search box ─────────────────────────────────────────────────
-  // Wait for a pause in typing before committing the term. Typing "Menon"
-  // fires one request instead of five.
+  // ── Calling window ──────────────────────────────────────────────────────────
+  // Fetched once on mount. The window is a server rule the browser cannot
+  // know, and without it every row looks callable at 10pm.
+  useEffect(() => {
+    if (!canStartCalls) return;
+    getCallingStatus()
+      .then(setCallingStatus)
+      .catch(() => { /* leave null — buttons fall back to optimistic */ });
+  }, [canStartCalls]);
+
+  // ── Debounced search ────────────────────────────────────────────────────────
   useEffect(() => {
     const timer = setTimeout(() => {
       setSearchTerm(searchInput);
-      setPage(1);          // a new search always starts at page one
+      setPage(1);
     }, SEARCH_DEBOUNCE_MS);
-
     return () => clearTimeout(timer);
   }, [searchInput]);
 
@@ -417,10 +404,10 @@ export default function CallData() {
       setError(null);
 
       const res = await getLeads({
-        skip:    (page - 1) * PAGE_SIZE,
-        limit:   PAGE_SIZE,
-        status:  filter === 'all' ? undefined : filter,
-        search:  searchTerm || undefined,
+        skip:   (page - 1) * PAGE_SIZE,
+        limit:  PAGE_SIZE,
+        status: filter === 'all' ? undefined : filter,
+        search: searchTerm || undefined,
         sortBy,
         sortDir,
       });
@@ -452,6 +439,50 @@ export default function CallData() {
   const handleFilter = (value: LeadStatus | 'all') => {
     setFilter(value);
     setPage(1);
+    setSelected(new Set());   // selection does not survive a filter change
+  };
+
+  const toggleOne = (id: number) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Only leads that can actually be called are selectable — ticking a
+  // declined lead then being told it was skipped is a wasted round trip
+  const callableOnPage = leads.filter(l => uncallableReason(l) === null);
+  const allCallableSelected =
+    callableOnPage.length > 0 && callableOnPage.every(l => selected.has(l.id));
+
+  const toggleAll = () => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (allCallableSelected) {
+        callableOnPage.forEach(l => next.delete(l.id));
+      } else {
+        callableOnPage.forEach(l => next.add(l.id));
+      }
+      return next;
+    });
+  };
+
+  const runBatch = async () => {
+    setBatchBusy(true);
+    setBatchError(null);
+    setBatchResult(null);
+    try {
+      const res = await startBatchCalls(Array.from(selected));
+      setBatchResult(res);
+      setSelected(new Set());
+      fetchLeads();
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : 'Could not start the campaign');
+    } finally {
+      setBatchBusy(false);
+    }
   };
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -483,14 +514,24 @@ export default function CallData() {
     <>
       <Topbar title="Call Data" badge={`${total} leads`} />
 
+      {/* Calling window notice */}
+      {canStartCalls && callingStatus && !callingStatus.canCall && (
+        <div style={{
+          padding: '9px 24px', background: 'rgba(245,158,11,.1)',
+          borderBottom: '1px solid rgba(245,158,11,.25)',
+          fontSize: 12, color: '#D97706', flexShrink: 0,
+        }}>
+          ⏰ {callingStatus.reason}
+        </div>
+      )}
+
       {/* Toolbar */}
       <div style={{
         padding: '14px 24px', display: 'flex', alignItems: 'center',
         gap: 10, flexWrap: 'wrap', borderBottom: `1px solid ${t.bord}`,
         background: t.surf, flexShrink: 0,
       }}>
-        {/* Search */}
-        <div style={{ position: 'relative', flex: 1, minWidth: 200, maxWidth: 300 }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 180, maxWidth: 280 }}>
           <span style={{
             position: 'absolute', left: 10, top: '50%',
             transform: 'translateY(-50%)', fontSize: 13,
@@ -515,7 +556,6 @@ export default function CallData() {
           )}
         </div>
 
-        {/* Status filter */}
         <div style={{
           display: 'flex', gap: 3, background: t.surf2,
           borderRadius: 8, padding: 3, flexWrap: 'wrap',
@@ -537,11 +577,36 @@ export default function CallData() {
           })}
         </div>
 
-        {/*
-          Not gated on can_export_data — the backend never enforces that
-          permission on any endpoint, so restricting this in the UI would
-          be stricter than the API actually is. Backend gap, not a frontend one.
-        */}
+        {/* Start campaign — appears once something is selected */}
+        {canStartCalls && selected.size > 0 && (
+          <button
+            onClick={runBatch}
+            disabled={batchBusy || (callingStatus ? !callingStatus.canCall : false)}
+            title={
+              callingStatus && !callingStatus.canCall
+                ? callingStatus.reason
+                : undefined
+            }
+            style={{
+              padding: '7px 14px',
+              background: callingStatus && !callingStatus.canCall
+                ? 'transparent' : '#10B981',
+              border: callingStatus && !callingStatus.canCall
+                ? `1px solid ${t.bord2}` : 'none',
+              borderRadius: 8,
+              color: callingStatus && !callingStatus.canCall ? t.muted : '#fff',
+              fontSize: 12, fontWeight: 600,
+              cursor: batchBusy ? 'wait' : 'pointer',
+              fontFamily: 'inherit', whiteSpace: 'nowrap',
+              opacity: batchBusy ? .6 : 1,
+            }}
+          >
+            {batchBusy
+              ? 'Starting…'
+              : `📞 Start campaign (${selected.size})`}
+          </button>
+        )}
+
         <button
           onClick={() => exportCSV(leads)}
           disabled={leads.length === 0}
@@ -557,6 +622,52 @@ export default function CallData() {
           ↓ Export page
         </button>
       </div>
+
+      {/* Batch result */}
+      {(batchResult || batchError) && (
+        <div style={{
+          padding: '10px 24px',
+          background: batchError ? 'rgba(239,68,68,.08)' : 'rgba(16,185,129,.08)',
+          borderBottom: `1px solid ${batchError ? 'rgba(239,68,68,.25)' : 'rgba(16,185,129,.25)'}`,
+          flexShrink: 0,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          }}>
+            <span style={{
+              fontSize: 12, fontWeight: 600,
+              color: batchError ? '#EF4444' : '#10B981',
+            }}>
+              {batchError ?? batchResult?.message}
+            </span>
+            <button
+              onClick={() => { setBatchResult(null); setBatchError(null); }}
+              style={{
+                background: 'transparent', border: 'none', color: t.muted,
+                fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >✕</button>
+          </div>
+
+          {batchResult && batchResult.rejected.length > 0 && (
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ fontSize: 11, color: t.muted, cursor: 'pointer' }}>
+                {batchResult.rejected.length} skipped — see why
+              </summary>
+              <div style={{ marginTop: 6, maxHeight: 140, overflowY: 'auto' }}>
+                {batchResult.rejected.map(r => (
+                  <div key={r.leadId} style={{
+                    fontSize: 11, color: t.text, padding: '3px 0',
+                  }}>
+                    <span style={{ color: t.muted }}>{r.name ?? `Lead ${r.leadId}`}</span>
+                    {' — '}{r.reason}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
 
       {/* Table */}
       <div style={{ flex: 1, overflow: 'auto', background: t.bg, position: 'relative' }}>
@@ -596,23 +707,38 @@ export default function CallData() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr>
-                {SORT_COLUMNS.slice(0, 1).map(col => (
-                  <th key={col.key}
-                      style={{ ...th, width: col.width, cursor: 'pointer' }}
-                      onClick={() => handleSort(col.key)}>
-                    {col.label}<SortArrow column={col.key} />
+                {canStartCalls && (
+                  <th style={{ ...th, width: 38, paddingRight: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={allCallableSelected}
+                      onChange={toggleAll}
+                      disabled={callableOnPage.length === 0}
+                      title="Select every callable lead on this page"
+                      style={{ cursor: 'pointer' }}
+                    />
                   </th>
-                ))}
-                <th style={{ ...th, width: 130 }}>Status</th>
-                {SORT_COLUMNS.slice(1).map(col => (
-                  <th key={col.key}
-                      style={{ ...th, width: col.width, cursor: 'pointer' }}
-                      onClick={() => handleSort(col.key)}>
-                    {col.label}<SortArrow column={col.key} />
-                  </th>
-                ))}
-                <th style={{ ...th, width: 120 }}>Next retry</th>
-                <th style={{ ...th, width: 110 }}>Transcript</th>
+                )}
+                <th style={{ ...th, width: SORT_COLUMNS[0].width, cursor: 'pointer' }}
+                    onClick={() => handleSort('name')}>
+                  Lead<SortArrow column="name" />
+                </th>
+                <th style={{ ...th, width: 120 }}>Status</th>
+                <th style={{ ...th, width: 100, cursor: 'pointer' }}
+                    onClick={() => handleSort('attempts')}>
+                  Attempts<SortArrow column="attempts" />
+                </th>
+                <th style={{ ...th, width: 120, cursor: 'pointer' }}
+                    onClick={() => handleSort('last_called')}>
+                  Last called<SortArrow column="last_called" />
+                </th>
+                <th style={{ ...th, width: 120, cursor: 'pointer' }}
+                    onClick={() => handleSort('score')}>
+                  Score<SortArrow column="score" />
+                </th>
+                <th style={{ ...th, width: 100 }}>Next retry</th>
+                {canStartCalls && <th style={{ ...th, width: 92 }}>Call</th>}
+                <th style={{ ...th, width: 100 }}>Transcript</th>
               </tr>
             </thead>
             <tbody>
@@ -620,15 +746,31 @@ export default function CallData() {
                 const meta  = STATUS_META[lead.status];
                 const retry = timeUntil(lead.nextRetry);
                 const sc    = scoreColor(lead.score);
-                const hasBeenCalled = lead.attempts > 0;
+                const blocked = uncallableReason(lead);
 
                 return (
-                  <tr key={lead.id} style={{ background: i % 2 === 0 ? t.surf : t.surf2 }}>
-                    {/* Lead */}
+                  <tr key={lead.id} style={{
+                    background: selected.has(lead.id)
+                      ? (dark ? 'rgba(99,102,241,.08)' : 'rgba(99,102,241,.05)')
+                      : (i % 2 === 0 ? t.surf : t.surf2),
+                  }}>
+                    {canStartCalls && (
+                      <td style={{ ...td, paddingRight: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(lead.id)}
+                          onChange={() => toggleOne(lead.id)}
+                          disabled={blocked !== null}
+                          title={blocked ?? undefined}
+                          style={{ cursor: blocked ? 'not-allowed' : 'pointer' }}
+                        />
+                      </td>
+                    )}
+
                     <td style={td}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{
-                          width: 32, height: 32, borderRadius: '50%',
+                          width: 30, height: 30, borderRadius: '50%',
                           background: AVATAR_COLORS[lead.id % AVATAR_COLORS.length],
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0,
@@ -649,7 +791,6 @@ export default function CallData() {
                       </div>
                     </td>
 
-                    {/* Status */}
                     <td style={td}>
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -665,7 +806,6 @@ export default function CallData() {
                       </span>
                     </td>
 
-                    {/* Attempts */}
                     <td style={td}>
                       <div style={{ display: 'flex', gap: 3 }}>
                         {Array.from({ length: 5 }, (_, d) => (
@@ -680,17 +820,15 @@ export default function CallData() {
                       </div>
                     </td>
 
-                    {/* Last called */}
                     <td style={{ ...td, fontSize: 12, color: t.muted }}>
                       {timeAgo(lead.lastCalled)}
                     </td>
 
-                    {/* Score */}
                     <td style={td}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <div style={{
                           flex: 1, height: 4, borderRadius: 2,
-                          background: t.surf3, minWidth: 40,
+                          background: t.surf3, minWidth: 34,
                         }}>
                           <div style={{
                             width: `${lead.score}%`, height: '100%',
@@ -699,7 +837,7 @@ export default function CallData() {
                         </div>
                         <span style={{
                           fontSize: 12, fontWeight: 700, color: sc,
-                          minWidth: 24, textAlign: 'right',
+                          minWidth: 22, textAlign: 'right',
                           fontFamily: 'var(--font-mono, monospace)',
                         }}>
                           {Math.round(lead.score)}
@@ -707,7 +845,6 @@ export default function CallData() {
                       </div>
                     </td>
 
-                    {/* Next retry */}
                     <td style={td}>
                       {retry ? (
                         <span style={{
@@ -724,13 +861,23 @@ export default function CallData() {
                       )}
                     </td>
 
-                    {/* Transcript */}
+                    {canStartCalls && (
+                      <td style={td}>
+                        <CallButton
+                          lead={lead}
+                          canCall={canStartCalls}
+                          windowReason={
+                            callingStatus && !callingStatus.canCall
+                              ? callingStatus.reason
+                              : undefined
+                          }
+                          onCallStarted={fetchLeads}
+                        />
+                      </td>
+                    )}
+
                     <td style={td}>
-                      {!hasBeenCalled ? (
-                        <span style={{ fontSize: 11, color: t.muted, fontStyle: 'italic' }}>
-                          No call yet
-                        </span>
-                      ) : canViewTranscripts ? (
+                      {lead.attempts > 0 ? (
                         <button onClick={() => setDrawerLead(lead)} style={{
                           padding: '4px 10px', borderRadius: 6,
                           border: `1px solid ${t.bord2}`, background: 'transparent',
@@ -741,7 +888,7 @@ export default function CallData() {
                         </button>
                       ) : (
                         <span style={{ fontSize: 11, color: t.muted, fontStyle: 'italic' }}>
-                          No transcript access
+                          No call yet
                         </span>
                       )}
                     </td>
@@ -761,6 +908,11 @@ export default function CallData() {
       }}>
         <span style={{ fontSize: 12, color: t.muted }}>
           {total === 0 ? 'No results' : `Showing ${rangeStart}–${rangeEnd} of ${total}`}
+          {selected.size > 0 && (
+            <span style={{ color: '#6366F1', fontWeight: 600 }}>
+              {' · '}{selected.size} selected
+            </span>
+          )}
         </span>
 
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>

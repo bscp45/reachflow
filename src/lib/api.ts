@@ -537,3 +537,125 @@ export async function approvePendingLeads(
   });
   return handleResponse(res);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Add these to src/lib/api.ts
+//
+// Types near the other shared types, functions in a "Calling" section —
+// above Call history reads naturally.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface CallingStatus {
+  canCall: boolean;
+  reason?: string;
+  windowOpensAt?: Date;
+  windowStartHour: number;
+  windowEndHour: number;
+  serverTimeIst: Date;
+}
+
+export interface StartCallResult {
+  started: boolean;
+  leadId: number;
+  vapiCallId?: string;
+  message: string;
+}
+
+export interface RejectedLead {
+  leadId: number;
+  name?: string;
+  reason: string;
+}
+
+export interface StartBatchResult {
+  queued: number;
+  rejected: RejectedLead[];
+  message: string;
+}
+
+// ── Calling ───────────────────────────────────────────────────────────────────
+
+/**
+ * Whether calls can be placed right now.
+ *
+ * The calling window is a server-side rule the browser has no way to know.
+ * Without checking, at 10pm every row looks callable and every click fails.
+ */
+export async function getCallingStatus(): Promise<CallingStatus> {
+  const res = await fetch(`${API_URL}/api/calls/status`, {
+    headers: getAuthHeaders(),
+  });
+
+  const data = await handleResponse<{
+    can_call: boolean;
+    reason: string | null;
+    window_opens_at: string | null;
+    window_start_hour: number;
+    window_end_hour: number;
+    server_time_ist: string;
+  }>(res);
+
+  return {
+    canCall: data.can_call,
+    reason: data.reason ?? undefined,
+    windowOpensAt: data.window_opens_at ? new Date(data.window_opens_at) : undefined,
+    windowStartHour: data.window_start_hour,
+    windowEndHour: data.window_end_hour,
+    serverTimeIst: new Date(data.server_time_ist),
+  };
+}
+
+/** Place a call to one lead, now. */
+export async function startCall(leadId: number): Promise<StartCallResult> {
+  const res = await fetch(`${API_URL}/api/calls/start`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ lead_id: leadId }),
+  });
+
+  const data = await handleResponse<{
+    started: boolean;
+    lead_id: number;
+    vapi_call_id: string | null;
+    message: string;
+  }>(res);
+
+  return {
+    started: data.started,
+    leadId: data.lead_id,
+    vapiCallId: data.vapi_call_id ?? undefined,
+    message: data.message,
+  };
+}
+
+/**
+ * Queue calls for several leads.
+ *
+ * Every lead is validated server-side before anything is queued, so the
+ * result lists exactly which were accepted and which were skipped and why.
+ */
+export async function startBatchCalls(leadIds: number[]): Promise<StartBatchResult> {
+  const res = await fetch(`${API_URL}/api/calls/start-batch`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ lead_ids: leadIds }),
+  });
+
+  const data = await handleResponse<{
+    queued: number;
+    rejected: Array<{ lead_id: number; name: string | null; reason: string }>;
+    message: string;
+  }>(res);
+
+  return {
+    queued: data.queued,
+    rejected: data.rejected.map(r => ({
+      leadId: r.lead_id,
+      name: r.name ?? undefined,
+      reason: r.reason,
+    })),
+    message: data.message,
+  };
+}
