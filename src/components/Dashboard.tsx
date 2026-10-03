@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Topbar from '@/components/layout/Topbar';
+import LeadUpload from '@/components/LeadUpload';
 import { useTheme } from '@/lib/theme-context';
 import { useAuth } from '@/lib/auth-context';
 import { getCampaignStats, getClients } from '@/lib/api';
@@ -25,36 +26,27 @@ export default function Dashboard() {
     muted: dark ? '#6B7280' : '#6B7280',
   };
 
-  useEffect(() => {
-    let cancelled = false;
+  // Lifted out of the effect so LeadUpload can call it after an upload
+  const load = useCallback(async (showLoading = true) => {
+    try {
+      if (showLoading) setLoading(true);
+      setError(null);
 
-    async function load() {
-      try {
-        setLoading(true);
-        setError(null);
+      const [statsData, clientsData] = await Promise.all([
+        getCampaignStats(),
+        getClients(),
+      ]);
 
-        // Fire both requests together rather than one after the other
-        const [statsData, clientsData] = await Promise.all([
-          getCampaignStats(),
-          getClients(),
-        ]);
-
-        // Guard against setting state after the component unmounted
-        if (cancelled) return;
-
-        setStats(statsData);
-        setClients(clientsData);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load dashboard');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      setStats(statsData);
+      setClients(clientsData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard');
+    } finally {
+      if (showLoading) setLoading(false);
     }
-
-    load();
-    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const pct = (n: number, total: number) =>
     total ? Math.round((n / total) * 100) : 0;
@@ -117,7 +109,7 @@ export default function Dashboard() {
               {error}
             </div>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => load()}
               style={{
                 padding: '8px 18px', background: '#6366F1', border: 'none',
                 borderRadius: 8, color: '#fff', fontSize: 12, fontWeight: 600,
@@ -234,6 +226,9 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
+
+        {/* Upload */}
+        <LeadUpload clients={clients} onUploaded={() => load(false)} />
 
         {/* Client overview — ReachFlow staff only */}
         {isReachFlowStaff && (

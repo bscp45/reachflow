@@ -430,3 +430,232 @@ export async function deleteClient(clientId: number): Promise<{ message: string 
   });
   return handleResponse(res);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Add these to src/lib/api.ts
+//
+// Place the types near the other shared types at the top, and the functions
+// in a new "Uploads" section — above the Clients section reads naturally.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Types (add near PaginatedLeads) ───────────────────────────────────────────
+
+export interface SkippedRow {
+  row: number;
+  reason: string;
+  detail: string;
+}
+
+export interface UploadResult {
+  imported: number;
+  skipped: SkippedRow[];
+  totalRows: number;
+  needsApproval: boolean;
+  message: string;
+}
+
+// ── Uploads ───────────────────────────────────────────────────────────────────
+
+/**
+ * Upload a CSV or Excel file of leads.
+ *
+ * clientId is only used by ReachFlow staff — for client users the backend
+ * takes the client from their token and ignores anything sent here.
+ */
+export async function uploadLeads(
+  file: File,
+  clientId?: number,
+): Promise<UploadResult> {
+  const form = new FormData();
+  form.append('file', file);
+
+  const query = clientId !== undefined ? `?client_id=${clientId}` : '';
+
+  const token = typeof window !== 'undefined'
+    ? localStorage.getItem('rf-token')
+    : null;
+
+  // Content-Type is deliberately omitted — the browser sets it along with
+  // the multipart boundary, and setting it by hand breaks the upload.
+  const res = await fetch(`${API_URL}/api/uploads/leads${query}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+
+  const data = await handleResponse<{
+    imported: number;
+    skipped: Array<{ row: number; reason: string; detail: string }>;
+    total_rows: number;
+    needs_approval: boolean;
+    message: string;
+  }>(res);
+
+  return {
+    imported: data.imported,
+    skipped: data.skipped,
+    totalRows: data.total_rows,
+    needsApproval: data.needs_approval,
+    message: data.message,
+  };
+}
+
+/**
+ * Download the CSV template.
+ *
+ * Fetched rather than linked because the endpoint requires authentication —
+ * a plain <a href> would arrive without the token and get a 401.
+ */
+export async function downloadTemplate(): Promise<void> {
+  const token = typeof window !== 'undefined'
+    ? localStorage.getItem('rf-token')
+    : null;
+
+  const res = await fetch(`${API_URL}/api/uploads/template`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!res.ok) throw new Error('Could not download the template');
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'reachflow-leads-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Release leads sitting in pending_approval. Client Owner and above. */
+export async function approvePendingLeads(
+  clientId?: number,
+): Promise<{ approved: number; message: string }> {
+  const query = clientId !== undefined ? `?client_id=${clientId}` : '';
+  const res = await fetch(`${API_URL}/api/uploads/approve${query}`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Add these to src/lib/api.ts
+//
+// Types near the other shared types, functions in a "Calling" section —
+// above Call history reads naturally.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface CallingStatus {
+  canCall: boolean;
+  reason?: string;
+  windowOpensAt?: Date;
+  windowStartHour: number;
+  windowEndHour: number;
+  serverTimeIst: Date;
+}
+
+export interface StartCallResult {
+  started: boolean;
+  leadId: number;
+  vapiCallId?: string;
+  message: string;
+}
+
+export interface RejectedLead {
+  leadId: number;
+  name?: string;
+  reason: string;
+}
+
+export interface StartBatchResult {
+  queued: number;
+  rejected: RejectedLead[];
+  message: string;
+}
+
+// ── Calling ───────────────────────────────────────────────────────────────────
+
+/**
+ * Whether calls can be placed right now.
+ *
+ * The calling window is a server-side rule the browser has no way to know.
+ * Without checking, at 10pm every row looks callable and every click fails.
+ */
+export async function getCallingStatus(): Promise<CallingStatus> {
+  const res = await fetch(`${API_URL}/api/calls/status`, {
+    headers: getAuthHeaders(),
+  });
+
+  const data = await handleResponse<{
+    can_call: boolean;
+    reason: string | null;
+    window_opens_at: string | null;
+    window_start_hour: number;
+    window_end_hour: number;
+    server_time_ist: string;
+  }>(res);
+
+  return {
+    canCall: data.can_call,
+    reason: data.reason ?? undefined,
+    windowOpensAt: data.window_opens_at ? new Date(data.window_opens_at) : undefined,
+    windowStartHour: data.window_start_hour,
+    windowEndHour: data.window_end_hour,
+    serverTimeIst: new Date(data.server_time_ist),
+  };
+}
+
+/** Place a call to one lead, now. */
+export async function startCall(leadId: number): Promise<StartCallResult> {
+  const res = await fetch(`${API_URL}/api/calls/start`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ lead_id: leadId }),
+  });
+
+  const data = await handleResponse<{
+    started: boolean;
+    lead_id: number;
+    vapi_call_id: string | null;
+    message: string;
+  }>(res);
+
+  return {
+    started: data.started,
+    leadId: data.lead_id,
+    vapiCallId: data.vapi_call_id ?? undefined,
+    message: data.message,
+  };
+}
+
+/**
+ * Queue calls for several leads.
+ *
+ * Every lead is validated server-side before anything is queued, so the
+ * result lists exactly which were accepted and which were skipped and why.
+ */
+export async function startBatchCalls(leadIds: number[]): Promise<StartBatchResult> {
+  const res = await fetch(`${API_URL}/api/calls/start-batch`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ lead_ids: leadIds }),
+  });
+
+  const data = await handleResponse<{
+    queued: number;
+    rejected: Array<{ lead_id: number; name: string | null; reason: string }>;
+    message: string;
+  }>(res);
+
+  return {
+    queued: data.queued,
+    rejected: data.rejected.map(r => ({
+      leadId: r.lead_id,
+      name: r.name ?? undefined,
+      reason: r.reason,
+    })),
+    message: data.message,
+  };
+}
